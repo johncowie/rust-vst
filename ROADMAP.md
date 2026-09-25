@@ -11,11 +11,12 @@ works in Ableton.
 ## Phase 0: Project setup
 
 - [x] `git init`
-- [ ] Install the Rust toolchain (`rustup`), plus both macOS targets (`aarch64-apple-darwin`, `x86_64-apple-darwin`)
-- [ ] Pick the plugin framework. Suggested: [nih-plug](https://github.com/robbert-vdh/nih-plug), which exports VST3 and CLAP from one codebase
-- [ ] Scaffold the crate (`cdylib`) and the `xtask` bundler (`cargo xtask bundle <name> --release`)
+- [x] Install the Rust toolchain via mise (Rust 1.98.1 through rustup), plus both macOS targets (`aarch64-apple-darwin`, `x86_64-apple-darwin`)
+- [x] Pick the plugin framework: [nice-plug](https://codeberg.org/RustAudio/nice-plug), the maintained community fork of nih-plug (which is in maintenance mode). It exports VST3 and CLAP from one codebase
+- [x] Scaffold the crate (`cdylib`) and the `xtask` bundler (`cargo xtask bundle <name> --release`)
 - [x] Add `.gitignore` (`/target`)
-- [ ] Note the licensing: nih-plug's VST3 bindings are GPLv3, which matters if the plugin is ever distributed
+- [x] Note the licensing: nice-plug is ISC and its VST3 bindings are MIT/Apache, so there is no GPLv3 constraint (see README)
+- [x] Add mise tasks (`build`, `build-universal`, `fmt`, `fmt-check`, `lint`, `check`) and the lint and format config
 
 ## Phase 1: Minimal pass-through plugin (volume control)
 
@@ -23,18 +24,18 @@ The goal is to prove that audio flows through our code and that we can change it
 
 - [ ] Plugin that copies input to output untouched
 - [ ] Add a `Gain` parameter (dB, e.g. -60 to +12) and apply it per sample
-- [ ] Smooth the parameter so it doesn't click (nih-plug `SmoothingStyle::Logarithmic`)
+- [ ] Smooth the parameter so it doesn't click (nice-plug `SmoothingStyle::Logarithmic`)
 - [ ] Build the VST3 bundle and copy it to `~/Library/Audio/Plug-Ins/VST3/`
 - [ ] Ad-hoc codesign the bundle so macOS / Ableton will load it (`codesign --force --deep -s - <bundle>`)
 - [ ] Rescan plugins in Ableton, put the plugin on an audio track, and check that the gain audibly changes the signal
 - [ ] Check that the parameter can be automated from Ableton
-- [ ] Add a script or `just`/`make` target that builds, signs, and installs in one step
+- [ ] Add a mise task that builds, signs, and installs in one step
 
 ## Phase 2: Development foundations
 
 - [ ] Offline test harness: run the plugin's DSP on a `.wav` file and write the result to a `.wav` (using `hound`), so DSP can be tested without a DAW
 - [ ] Unit tests for the DSP pieces, kept separate from the plugin glue code
-- [ ] Basic GUI (e.g. `nih_plug_egui`) with a gain knob and a readout area for debug info
+- [ ] Basic GUI (e.g. nice-plug's egui editor integration) with a gain knob and a readout area for debug info
 - [ ] Dry/wet mix parameter (the harmoniser will need it)
 - [ ] Collect some test audio: a sung scale, a held note, vibrato, and a monophonic instrument line
 
@@ -77,4 +78,4 @@ The goal is to prove that audio flows through our code and that we can change it
 - [ ] Set the key from MIDI (sidechain MIDI notes or chords to pick the harmony)
 - [ ] Presets
 - [ ] Performance pass: profile CPU use and remove allocations from the audio thread
-- [ ] Universal binary (arm64 + x86_64) and a CLAP build for other DAWs
+- [ ] Universal binary (arm64 + x86_64) and a CLAP build for other DAWs (delivered in Phase 0 via `mise run build-universal`)

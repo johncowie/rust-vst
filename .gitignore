@@ -1,3 +1,4 @@
 /target
 .DS_Store
 .accelerator/config.local.md
+mise.local.toml
