@@ -44,6 +44,7 @@ Run a task with `mise run <task>`, or `mise run` on its own to pick one.
 |---|---|
 | `build` | Bundle corral as VST3 and CLAP for the host architecture (release) |
 | `build-universal` | Bundle corral as universal (arm64 + x86_64) macOS VST3 and CLAP (release) |
+| `install` | Build the universal VST3, ad-hoc sign it, and install it to ~/Library/Audio/Plug-Ins/VST3 (quit Ableton Live first) |
 | `fmt` | Format all workspace code |
 | `fmt-check` | Check formatting without changing files |
 | `lint` | Run clippy on all targets, treating warnings as errors |
@@ -52,6 +53,24 @@ Run a task with `mise run <task>`, or `mise run` on its own to pick one.
 Bundles land in `target/bundled/Corral.vst3` and `target/bundled/Corral.clap`.
 `build-universal` writes to the same paths, overwriting them with universal
 binaries.
+
+## Loading in Ableton Live 10
+
+1. Quit Live, then run `mise run install`. The task refuses to run while Live
+   is open, because Live doesn't pick up plugins that change while it's
+   running.
+2. In Live, open Preferences → Plug-ins and turn on "Use VST3 Plug-in System
+   Folders".
+3. Corral appears under Plug-ins → VST3. Drop it onto an audio track.
+
+Notes:
+
+- Live 10 is Intel-only and runs under Rosetta 2 on Apple Silicon, so it only
+  loads plugins with an x86_64 slice. That is why `install` uses the
+  universal build.
+- If the plugin's name or parameters change, Option-click Rescan in the
+  Plug-ins preferences. This clears Live's plugin database and does a clean
+  scan.
 
 ## Licensing
 

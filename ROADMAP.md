@@ -22,14 +22,14 @@ works in Ableton.
 
 The goal is to prove that audio flows through our code and that we can change it.
 
-- [ ] Plugin that copies input to output untouched
-- [ ] Add a `Gain` parameter (dB, e.g. -60 to +12) and apply it per sample
-- [ ] Smooth the parameter so it doesn't click (nice-plug `SmoothingStyle::Logarithmic`)
-- [ ] Build the VST3 bundle and copy it to `~/Library/Audio/Plug-Ins/VST3/`
-- [ ] Ad-hoc codesign the bundle so macOS / Ableton will load it (`codesign --force --deep -s - <bundle>`)
+- [x] Plugin that copies input to output untouched
+- [x] Add a `Gain` parameter (dB, e.g. -60 to +12) and apply it per sample
+- [x] Smooth the parameter so it doesn't click (nice-plug `SmoothingStyle::Logarithmic`)
+- [x] Build the VST3 bundle and copy it to `~/Library/Audio/Plug-Ins/VST3/` (`mise run install` uses the universal build, because Live 10 runs under Rosetta and needs the x86_64 slice)
+- [x] Ad-hoc codesign the bundle so macOS / Ableton will load it (`codesign --force --deep -s - <bundle>`)
 - [ ] Rescan plugins in Ableton, put the plugin on an audio track, and check that the gain audibly changes the signal
 - [ ] Check that the parameter can be automated from Ableton
-- [ ] Add a mise task that builds, signs, and installs in one step
+- [x] Add a mise task that builds, signs, and installs in one step
 
 ## Phase 2: Development foundations
 
