@@ -9,6 +9,10 @@ crate-type = ["cdylib"]
 
 [dependencies]
 nice-plug = "0.4"
+nice-plug-egui = "0.5"
+# nice-plug-egui turns off egui's default features, which include the fonts.
+# Without them every label renders blank.
+egui = { version = "0.36", features = ["default_fonts"] }
 
 [lints]
 workspace = true

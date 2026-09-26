@@ -109,25 +109,25 @@ This is Phase 2 of `ROADMAP.md`, reduced to unit tests and a GUI. The offline
 
 ## Acceptance Criteria
 
-- [ ] Given the DSP module, when I run `mise run test`, then all gain and
+- [x] Given the DSP module, when I run `mise run test`, then all gain and
       display tests pass. `mise run check` runs them and exits 0.
-- [ ] Given `corral/src/dsp.rs`, then it contains no `nice_plug` import.
-- [ ] `mise tasks` lists `test` with a description.
-- [ ] Given Corral is installed with `mise run install` and on an audio track
+- [x] Given `corral/src/dsp.rs`, then it contains no `nice_plug` import.
+- [x] `mise tasks` lists `test` with a description.
+- [x] Given Corral is installed with `mise run install` and on an audio track
       in Live 10, when I open the plugin window, then an editor appears with
       a Gain slider and a gain readout. The window isn't blank.
-- [ ] Given the editor is open, when I drag the slider to −12 dB, then:
+- [x] Given the editor is open, when I drag the slider to −12 dB, then:
       - the readout glides to "-12.00 dB";
       - Live's own display of the Gain parameter matches;
       - the track meter peak drops about 12 dB, as in 0002.
-- [ ] Given Gain automation is playing back, when the editor is open, then
+- [x] Given Gain automation is playing back, when the editor is open, then
       the slider and the readout both follow the envelope.
-- [ ] Given the slider is at its minimum, then the readout shows "-inf" and
+- [x] Given the slider is at its minimum, then the readout shows "-inf" and
       the track meter shows no signal.
-- [ ] Given the editor is open, when I close and reopen the plugin window
+- [x] Given the editor is open, when I close and reopen the plugin window
       several times, and delete the device while its window is open, then
       Live doesn't crash.
-- [ ] Given a set with a non-default Gain value, when I save it, quit Live
+- [x] Given a set with a non-default Gain value, when I save it, quit Live
       and reopen it, then the value is restored (no regression from 0002).
 
 ## Open Questions

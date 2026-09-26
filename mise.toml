@@ -53,6 +53,10 @@ run = "cargo fmt --all --check"
 description = "Run clippy on all targets, treating warnings as errors"
 run = "cargo clippy --workspace --all-targets -- -D warnings"
 
+[tasks.test]
+description = "Run the workspace unit tests"
+run = "cargo test --workspace"
+
 [tasks.check]
-description = "Run fmt-check then lint (the CI entry point)"
-run = [{ task = "fmt-check" }, { task = "lint" }]
+description = "Run fmt-check, lint, then test (the CI entry point)"
+run = [{ task = "fmt-check" }, { task = "lint" }, { task = "test" }]

@@ -48,7 +48,8 @@ Run a task with `mise run <task>`, or `mise run` on its own to pick one.
 | `fmt` | Format all workspace code |
 | `fmt-check` | Check formatting without changing files |
 | `lint` | Run clippy on all targets, treating warnings as errors |
-| `check` | Run fmt-check then lint (the CI entry point) |
+| `test` | Run the workspace unit tests |
+| `check` | Run fmt-check, lint, then test (the CI entry point) |
 
 Bundles land in `target/bundled/Corral.vst3` and `target/bundled/Corral.clap`.
 `build-universal` writes to the same paths, overwriting them with universal

@@ -1,14 +1,30 @@
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 
 use nice_plug::prelude::*;
+use nice_plug_egui::{
+    EguiEditor, EguiEditorState, EguiNiceSettings, RepaintNotifier, create_egui_editor,
+};
 
-const MIN_GAIN_DB: f32 = -60.0;
+use crate::editor::CorralEditor;
+
+mod dsp;
+mod editor;
+
 const MAX_GAIN_DB: f32 = 12.0;
 
 /// Stereo gain. The −60 dB floor is treated as silence ("-inf").
-#[derive(Default)]
 pub struct Corral {
     params: Arc<CorralParams>,
+    editor_state: Arc<EguiEditorState>,
+    repaint_notifier: RepaintNotifier,
+    /// The smoothed gain applied to the last frame, shown by the editor's readout.
+    readout_gain: Arc<AtomicF32>,
+    /// The last value stored in `readout_gain`, so the audio thread only
+    /// stores and repaints when it changes.
+    last_readout_gain: f32,
+    /// Held until the host asks for the editor, which it does once.
+    initial_editor: Option<CorralEditor>,
 }
 
 #[derive(Params)]
@@ -18,32 +34,35 @@ struct CorralParams {
     gain: FloatParam,
 }
 
-/// Gains at or below this are the floor and output silence. The smoother
-/// lands exactly on its target, so the tolerance only absorbs float error.
-fn silence_threshold() -> f32 {
-    util::db_to_gain(MIN_GAIN_DB) * 1.0001
+impl Default for Corral {
+    fn default() -> Self {
+        let params = Arc::new(CorralParams::default());
+        let unity = util::db_to_gain(0.0);
+        let readout_gain = Arc::new(AtomicF32::new(unity));
+
+        Self {
+            initial_editor: Some(CorralEditor::new(params.clone(), readout_gain.clone())),
+            params,
+            editor_state: editor::default_state(),
+            repaint_notifier: RepaintNotifier::new(),
+            readout_gain,
+            last_readout_gain: unity,
+        }
+    }
 }
 
 impl Default for CorralParams {
     fn default() -> Self {
-        let gain_to_db = formatters::v2s_f32_gain_to_db(2);
-
         Self {
             gain: FloatParam::new(
                 "Gain",
                 util::db_to_gain(0.0),
-                FloatRange::gain_range(MIN_GAIN_DB, MAX_GAIN_DB),
+                FloatRange::gain_range(dsp::MIN_GAIN_DB, MAX_GAIN_DB),
             )
             // Logarithmic smoothing can't reach 0.0, which is why the range stops at −60 dB.
             .with_smoother(SmoothingStyle::Logarithmic(50.0))
             .with_unit(" dB")
-            .with_value_to_string(Arc::new(move |gain| {
-                if gain <= silence_threshold() {
-                    String::from("-inf")
-                } else {
-                    gain_to_db(gain)
-                }
-            }))
+            .with_value_to_string(Arc::new(dsp::format_gain))
             .with_string_to_value(formatters::s2v_f32_gain_to_db()),
         }
     }
@@ -64,12 +83,21 @@ impl Plugin for Corral {
 
     const MIDI_INPUT: MidiConfig = MidiConfig::None;
 
-    type Editor = ();
+    type Editor = EguiEditor<CorralEditor>;
     type SysExMessage = ();
     type BackgroundTask = ();
 
     fn params(&self) -> Arc<dyn Params> {
         self.params.clone()
+    }
+
+    fn editor(&mut self, _async_executor: AsyncExecutor<Self>) -> Option<Self::Editor> {
+        create_egui_editor(
+            self.editor_state.clone(),
+            self.repaint_notifier.clone(),
+            EguiNiceSettings::new().with_tile(Self::NAME),
+            self.initial_editor.take()?,
+        )
     }
 
     fn process(
@@ -78,15 +106,28 @@ impl Plugin for Corral {
         _aux: &mut AuxiliaryBuffers,
         _context: &mut impl ProcessContext<Self>,
     ) -> ProcessStatus {
-        let silence_threshold = silence_threshold();
+        let mut last_gain = None;
 
         for channel_samples in buffer.iter_samples() {
             // One smoothed value per frame, shared by both channels.
             let gain = self.params.gain.smoothed.next();
-            let silent = gain <= silence_threshold;
 
             for sample in channel_samples {
-                *sample = if silent { 0.0 } else { *sample * gain };
+                *sample = dsp::apply_gain(*sample, gain);
+            }
+            last_gain = Some(gain);
+        }
+
+        // Share the gain with the readout once per buffer, only when it changes.
+        // It's stored even while the window is closed, so the readout is right
+        // when it opens. Both calls are single atomic stores.
+        if let Some(gain) = last_gain
+            && gain != self.last_readout_gain
+        {
+            self.last_readout_gain = gain;
+            self.readout_gain.store(gain, Ordering::Relaxed);
+            if self.editor_state.is_open() {
+                self.repaint_notifier.request_repaint();
             }
         }
 

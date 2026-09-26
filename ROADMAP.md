@@ -33,19 +33,18 @@ The goal is to prove that audio flows through our code and that we can change it
 
 ## Phase 2: Development foundations
 
-- [ ] Offline test harness: run the plugin's DSP on a `.wav` file and write the result to a `.wav` (using `hound`), so DSP can be tested without a DAW
-- [ ] Unit tests for the DSP pieces, kept separate from the plugin glue code
-- [ ] Basic GUI (e.g. nice-plug's egui editor integration) with a gain knob and a readout area for debug info
-- [ ] Dry/wet mix parameter (the harmoniser will need it)
-- [ ] Collect some test audio: a sung scale, a held note, vibrato, and a monophonic instrument line
+- [x] Unit tests for the DSP pieces, kept separate from the plugin glue code
+- [x] Basic GUI (e.g. nice-plug's egui editor integration) with a gain knob and a readout area for debug info
 
 ## Phase 3: Pitch detection
 
+- [ ] Offline test harness: run the plugin's DSP on a `.wav` file and write the result to a `.wav` (using `hound`), so DSP can be tested without a DAW
+- [ ] Collect some test audio: a sung scale, a held note, vibrato, and a monophonic instrument line
 - [ ] Implement a monophonic pitch detector. Start with YIN, and consider pYIN or McLeod (MPM) if YIN proves noisy
 - [ ] Voicing / confidence gate so that silence, breaths, and noise don't produce a pitch
 - [ ] Convert frequency to MIDI note number plus cents offset
 - [ ] Show the detected note in the GUI (e.g. "D4 +12¢") and confirm it tracks your voice in Ableton
-- [ ] Test the detector against the test audio from Phase 2 (accuracy, octave errors)
+- [ ] Test the detector against the test audio (accuracy, octave errors)
 - [ ] Measure the detection latency and tune the window size (trade latency against low-note accuracy)
 
 ## Phase 4: Pitch shifting
@@ -54,6 +53,7 @@ The goal is to prove that audio flows through our code and that we can change it
   - Option A: **TD-PSOLA**, which uses the detected pitch period, suits monophonic voice, and keeps formants
   - Option B: **phase vocoder**, which is more general but can sound "phasey" and moves formants
 - [ ] Mix the shifted signal with the dry signal
+- [ ] Dry/wet mix parameter (the harmoniser will need it)
 - [ ] Report plugin latency to the host so Ableton can compensate for the delay
 - [ ] Listening tests in Ableton: artefacts, transients, low notes
 - [ ] Make the shift amount a parameter (semitones) as an interim "fixed harmoniser"
