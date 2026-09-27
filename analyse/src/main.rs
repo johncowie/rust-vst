@@ -386,6 +386,47 @@ mod tests {
         assert!(run_bytes(&wav, 0.0).is_err(), "3 channels were accepted");
     }
 
+    #[test]
+    fn committed_fixtures_pass_through_bit_identical_at_0_db() {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../corral-dsp/tests/fixtures");
+        let mut checked = 0;
+        for entry in fs::read_dir(&dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.extension().is_none_or(|e| e != "wav") {
+                continue;
+            }
+            let input = fs::read(&path).unwrap();
+            let (output, _) = run_bytes(&input, 0.0).unwrap();
+            let (mut before, mut after) = (
+                WavReader::new(input.as_slice()).unwrap(),
+                WavReader::new(output.as_slice()).unwrap(),
+            );
+            assert_eq!(after.spec(), before.spec(), "{}", path.display());
+            match before.spec().sample_format {
+                SampleFormat::Int => {
+                    let samples = |r: &mut WavReader<&[u8]>| {
+                        r.samples::<i32>().map(Result::unwrap).collect::<Vec<_>>()
+                    };
+                    assert!(
+                        samples(&mut before) == samples(&mut after),
+                        "{}",
+                        path.display()
+                    );
+                }
+                SampleFormat::Float => {
+                    let bits = |r: &mut WavReader<&[u8]>| {
+                        r.samples::<f32>()
+                            .map(|s| s.unwrap().to_bits())
+                            .collect::<Vec<_>>()
+                    };
+                    assert!(bits(&mut before) == bits(&mut after), "{}", path.display());
+                }
+            }
+            checked += 1;
+        }
+        assert_eq!(checked, 7, "fixture WAVs in {}", dir.display());
+    }
+
     fn args(list: &[&str]) -> Option<Args> {
         parse_args(list.iter().map(|s| s.to_string()))
     }

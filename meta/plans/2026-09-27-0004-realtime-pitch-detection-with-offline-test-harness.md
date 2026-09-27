@@ -1063,17 +1063,17 @@ If a threshold fails:
 
 #### Automated Verification:
 
-- [ ] `mise run fixtures` completes, and a second run doesn't download
+- [x] `mise run fixtures` completes, and a second run doesn't download
       again
-- [ ] `git status --porcelain corral-dsp/tests/fixtures` is empty after a
+- [x] `git status --porcelain corral-dsp/tests/fixtures` is empty after a
       second `mise run fixtures`, so the output is reproducible
-- [ ] `du -ck corral-dsp/tests/fixtures/* | tail -1` is under 5120
-- [ ] `ls corral-dsp/tests/fixtures/*.wav | wc -l` prints 7
-- [ ] `git check-ignore .datasets` matches
-- [ ] `cargo test -p corral-dsp --test fixtures -- --nocapture` passes and
+- [x] `du -ck corral-dsp/tests/fixtures/* | tail -1` is under 5120
+- [x] `ls corral-dsp/tests/fixtures/*.wav | wc -l` prints 7
+- [x] `git check-ignore .datasets` matches
+- [x] `cargo test -p corral-dsp --test fixtures -- --nocapture` passes and
       prints 7 score lines
-- [ ] `cargo test -p analyse` passes, including the fixture bit-identity test
-- [ ] `mise run check` exits 0
+- [x] `cargo test -p analyse` passes, including the fixture bit-identity test
+- [x] `mise run check` exits 0
 
 #### Manual Verification:
 

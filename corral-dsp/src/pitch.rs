@@ -11,7 +11,10 @@ use realfft::{ComplexToReal, RealFftPlanner, RealToComplex};
 pub const MIN_F0_HZ: f32 = 80.0;
 pub const MAX_F0_HZ: f32 = 1000.0;
 /// YIN's absolute threshold on the cumulative mean normalised difference.
-const YIN_THRESHOLD: f32 = 0.15;
+/// Lowered from 0.15: at 0.15 the MDB male-singer fixture locked onto half
+/// the period (RCA − RPA 0.065); 0.10 brings that to 0.006 without changing
+/// the other fixtures or the synthetic signals.
+const YIN_THRESHOLD: f32 = 0.10;
 /// Voiced needs confidence (1 − CMND at the chosen lag) at or above this…
 const MIN_CONFIDENCE: f32 = 0.8;
 /// …and the window RMS at or above this.

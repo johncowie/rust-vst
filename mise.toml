@@ -61,6 +61,29 @@ run = "cargo test --workspace"
 description = "Run the plugin's DSP chain on a WAV: analyse <in.wav> [out.wav] [--gain-db <dB>] (writes out.wav and out.csv; paths are relative to the project root)"
 run = "cargo run --release --quiet -p analyse --"
 
+[tasks.fixtures]
+description = "Download the pitch datasets into .datasets/ (~2.2 GB, once) and regenerate the committed test fixtures"
+run = '''
+set -eu
+mkdir -p .datasets
+cd .datasets
+fetch() { [ -f "$1" ] || { curl --fail --location --output "$1.part" "$2" && mv "$1.part" "$1"; }; }
+fetch vocadito.zip 'https://zenodo.org/records/5578807/files/vocadito.zip?download=1'
+fetch MDB-stem-synth.tar.gz 'https://zenodo.org/records/1481172/files/MDB-stem-synth.tar.gz?download=1'
+fetch nsynth-test.jsonwav.tar.gz 'http://download.magenta.tensorflow.org/datasets/nsynth/nsynth-test.jsonwav.tar.gz'
+# Vocadito's md5 is published; the other two were recorded on first download (2026-09-27).
+[ "$(md5 -q vocadito.zip)" = dea40fd18f14d899643c4ba221b33a46 ] || { echo "vocadito.zip checksum mismatch" >&2; exit 1; }
+shasum -a 256 --check --quiet <<'SUMS'
+92c3349e62b1e0cfca07a286d47fe3b19c4e46da71ccd19554b6e2aab172aa1a  MDB-stem-synth.tar.gz
+0f9ba5d62beba9ec4612f918d19f5e87a681822f1c566124f05fe8b27a51934c  nsynth-test.jsonwav.tar.gz
+SUMS
+[ -d vocadito ] || unzip -q vocadito.zip -x '__MACOSX/*' -d vocadito
+[ -d mdb ] || { mkdir mdb && tar -xzf MDB-stem-synth.tar.gz -C mdb; }
+[ -d nsynth ] || { mkdir nsynth && tar -xzf nsynth-test.jsonwav.tar.gz -C nsynth; }
+cd ..
+cargo run --release --quiet -p fixtures -- build
+'''
+
 [tasks.check]
 description = "Run fmt-check, lint, then test (the CI entry point)"
 run = [{ task = "fmt-check" }, { task = "lint" }, { task = "test" }]
