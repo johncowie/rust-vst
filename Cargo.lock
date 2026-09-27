@@ -39,6 +39,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "analyse"
+version = "0.1.0"
+dependencies = [
+ "corral-dsp",
+ "hound",
+]
+
+[[package]]
 name = "android-activity"
 version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"

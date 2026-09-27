@@ -57,6 +57,10 @@ run = "cargo clippy --workspace --all-targets -- -D warnings"
 description = "Run the workspace unit tests"
 run = "cargo test --workspace"
 
+[tasks.analyse]
+description = "Run the plugin's DSP chain on a WAV: analyse <in.wav> [out.wav] [--gain-db <dB>] (writes out.wav and out.csv; paths are relative to the project root)"
+run = "cargo run --release --quiet -p analyse --"
+
 [tasks.check]
 description = "Run fmt-check, lint, then test (the CI entry point)"
 run = [{ task = "fmt-check" }, { task = "lint" }, { task = "test" }]

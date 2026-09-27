@@ -865,15 +865,15 @@ run = "cargo run --release --quiet -p analyse --"
 
 #### Automated Verification:
 
-- [ ] `mise run check` exits 0, including the `analyse` unit tests
-- [ ] `mise tasks` lists `analyse` with its description
-- [ ] Synthesised input works end to end:
-  - [ ] write a test WAV (a stereo 16-bit 220 Hz tone) with a small
+- [x] `mise run check` exits 0, including the `analyse` unit tests
+- [x] `mise tasks` lists `analyse` with its description
+- [x] Synthesised input works end to end:
+  - [x] write a test WAV (a stereo 16-bit 220 Hz tone) with a small
         throwaway test or snippet, not committed;
-  - [ ] `mise run analyse <it> target/analyse/tone.wav` writes
+  - [x] `mise run analyse <it> target/analyse/tone.wav` writes
         `target/analyse/tone.wav` and `target/analyse/tone.csv`;
-  - [ ] the CSV's voiced rows show `f0_hz` ≈ 220.
-- [ ] `mise run analyse` with no arguments exits non-zero and prints the
+  - [x] the CSV's voiced rows show `f0_hz` ≈ 220.
+- [x] `mise run analyse` with no arguments exits non-zero and prints the
       usage line
 
 #### Manual Verification:
