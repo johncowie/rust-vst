@@ -443,14 +443,14 @@ Unit tests:
 
 #### Automated Verification:
 
-- [ ] `mise run check` exits 0
-- [ ] `cargo test -p corral-dsp note::` and `cargo test -p corral-dsp eval::`
+- [x] `mise run check` exits 0
+- [x] `cargo test -p corral-dsp note::` and `cargo test -p corral-dsp eval::`
       each run and pass
-- [ ] `grep -rn nice_plug corral-dsp/` prints nothing
+- [x] `grep -rn nice_plug corral-dsp/` prints nothing
 
 #### Manual Verification:
 
-- [ ] None.
+- [x] None.
 
 ---
 
