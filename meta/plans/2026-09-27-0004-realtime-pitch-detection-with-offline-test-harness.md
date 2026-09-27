@@ -753,23 +753,23 @@ to the binary.
 
 #### Automated Verification:
 
-- [ ] `mise run check` exits 0
-- [ ] `cargo test -p corral-dsp --test synthetic -- --nocapture` passes and
+- [x] `mise run check` exits 0
+- [x] `cargo test -p corral-dsp --test synthetic -- --nocapture` passes and
       prints scores for every signal at both rates
-- [ ] `cargo test -p corral-dsp --test no_alloc` passes
-- [ ] `cargo test -p corral-dsp --test latency -- --nocapture` prints four
+- [x] `cargo test -p corral-dsp --test no_alloc` passes
+- [x] `cargo test -p corral-dsp --test latency -- --nocapture` prints four
       latency lines
-- [ ] Sanity check for the allocation test:
-  - [ ] temporarily add `let _v = vec![0u8; 1];` inside `Yin::analyse`;
-  - [ ] `cargo test -p corral-dsp --test no_alloc` now fails;
-  - [ ] revert the line.
-- [ ] `grep -rn nice_plug corral-dsp/src` prints nothing
-- [ ] `grep -n '\.process(' corral-dsp/src/pitch.rs` prints nothing (only
+- [x] Sanity check for the allocation test:
+  - [x] temporarily add `let _v = vec![0u8; 1];` inside `Yin::analyse`;
+  - [x] `cargo test -p corral-dsp --test no_alloc` now fails;
+  - [x] revert the line.
+- [x] `grep -rn nice_plug corral-dsp/src` prints nothing
+- [x] `grep -n '\.process(' corral-dsp/src/pitch.rs` prints nothing (only
       `process_with_scratch` is used)
 
 #### Manual Verification:
 
-- [ ] None. Real audio is checked in Phase 5 and in Live in Phase 7.
+- [x] None. Real audio is checked in Phase 5 and in Live in Phase 7.
 
 ---
 

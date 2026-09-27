@@ -5,6 +5,13 @@ edition.workspace = true
 publish = false
 
 [dependencies]
+realfft = "3.5"
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+hound = "3.5"
+# Same fork nice-plug uses; installed as the global allocator in tests/no_alloc.rs only.
+# `warn_debug` counts violations instead of aborting, so a failure is a normal assertion.
+nice-assert-no-alloc = { version = "1.0", features = ["warn_debug"] }
