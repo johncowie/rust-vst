@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["corral", "xtask"]
+members = ["corral", "corral-dsp", "xtask"]
 
 [workspace.package]
 edition = "2024"

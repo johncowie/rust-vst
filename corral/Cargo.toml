@@ -8,6 +8,7 @@ publish = false
 crate-type = ["cdylib"]
 
 [dependencies]
+corral-dsp = { path = "../corral-dsp" }
 nice-plug = "0.4"
 nice-plug-egui = "0.5"
 # nice-plug-egui turns off egui's default features, which include the fonts.

@@ -1,5 +1,4 @@
-//! Plain DSP for corral. Nothing here depends on nice-plug, so it can be
-//! unit-tested without a host.
+//! Gain maths and the Gain display formatter.
 
 /// The bottom of the Gain range. The floor is treated as silence ("-inf").
 pub const MIN_GAIN_DB: f32 = -60.0;

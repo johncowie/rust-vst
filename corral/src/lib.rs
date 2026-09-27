@@ -6,9 +6,10 @@ use nice_plug_egui::{
     EguiEditor, EguiEditorState, EguiNiceSettings, RepaintNotifier, create_egui_editor,
 };
 
+use corral_dsp::gain;
+
 use crate::editor::CorralEditor;
 
-mod dsp;
 mod editor;
 
 const MAX_GAIN_DB: f32 = 12.0;
@@ -57,12 +58,12 @@ impl Default for CorralParams {
             gain: FloatParam::new(
                 "Gain",
                 util::db_to_gain(0.0),
-                FloatRange::gain_range(dsp::MIN_GAIN_DB, MAX_GAIN_DB),
+                FloatRange::gain_range(gain::MIN_GAIN_DB, MAX_GAIN_DB),
             )
             // Logarithmic smoothing can't reach 0.0, which is why the range stops at −60 dB.
             .with_smoother(SmoothingStyle::Logarithmic(50.0))
             .with_unit(" dB")
-            .with_value_to_string(Arc::new(dsp::format_gain))
+            .with_value_to_string(Arc::new(gain::format_gain))
             .with_string_to_value(formatters::s2v_f32_gain_to_db()),
         }
     }
@@ -113,7 +114,7 @@ impl Plugin for Corral {
             let gain = self.params.gain.smoothed.next();
 
             for sample in channel_samples {
-                *sample = dsp::apply_gain(*sample, gain);
+                *sample = gain::apply_gain(*sample, gain);
             }
             last_gain = Some(gain);
         }

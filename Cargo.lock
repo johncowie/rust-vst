@@ -415,10 +415,15 @@ dependencies = [
 name = "corral"
 version = "0.1.0"
 dependencies = [
+ "corral-dsp",
  "egui",
  "nice-plug",
  "nice-plug-egui",
 ]
+
+[[package]]
+name = "corral-dsp"
+version = "0.1.0"
 
 [[package]]
 name = "crossbeam"

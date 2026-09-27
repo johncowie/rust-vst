@@ -8,7 +8,9 @@ use nice_plug::editor::dpi::LogicalSize;
 use nice_plug::prelude::*;
 use nice_plug_egui::{EguiEditorState, NiceEguiApp, widgets};
 
-use crate::{CorralParams, dsp};
+use corral_dsp::gain;
+
+use crate::CorralParams;
 
 /// Fixed and not saved with the set.
 const WINDOW_SIZE: LogicalSize<f32> = LogicalSize::new(300.0, 120.0);
@@ -52,7 +54,7 @@ impl NiceEguiApp for CorralEditor {
             return;
         };
         let setter = gui_context.param_setter();
-        let readout = dsp::format_gain(self.readout_gain.load(Ordering::Relaxed));
+        let readout = gain::format_gain(self.readout_gain.load(Ordering::Relaxed));
 
         // The root Ui has no background of its own.
         egui::CentralPanel::default().show(ui, |ui| {
