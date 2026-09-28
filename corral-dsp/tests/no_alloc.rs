@@ -8,7 +8,7 @@
 mod common;
 
 use common::{harmonic_tone, white_noise};
-use corral_dsp::chain::Chain;
+use corral_dsp::chain::{Chain, Settings};
 use nice_assert_no_alloc::{
     AllocDisabler, assert_no_alloc, reset_violation_count, violation_count,
 };
@@ -16,10 +16,10 @@ use nice_assert_no_alloc::{
 #[global_allocator]
 static A: AllocDisabler = AllocDisabler;
 
-fn run(chain: &mut Chain, signal: &[f32], gain: f32) {
+fn run(chain: &mut Chain, signal: &[f32], settings: Settings) {
     for &s in signal {
         let mut frame = [s, s];
-        std::hint::black_box(chain.process_frame(&mut frame, gain));
+        std::hint::black_box(chain.process_frame(&mut frame, settings));
     }
 }
 
@@ -36,10 +36,18 @@ fn per_frame_path_never_allocates() {
         reset_violation_count();
         assert_no_alloc(|| {
             for signal in [&tone, &noise, &silence] {
-                run(&mut chain, signal, 0.5);
+                run(
+                    &mut chain,
+                    signal,
+                    Settings {
+                        gain: 0.5,
+                        mix: 0.5,
+                        shift: 4,
+                    },
+                );
             }
             chain.reset();
-            run(&mut chain, &tone, 1.0);
+            run(&mut chain, &tone, common::DRY);
         });
         assert_eq!(violation_count(), 0, "{sample_rate} Hz");
     }

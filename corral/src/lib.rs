@@ -6,7 +6,8 @@ use nice_plug_egui::{
     EguiEditor, EguiEditorState, EguiNiceSettings, RepaintNotifier, create_egui_editor,
 };
 
-use corral_dsp::{chain::Chain, gain, note};
+use corral_dsp::chain::{Chain, Settings};
+use corral_dsp::{gain, note};
 
 use crate::editor::CorralEditor;
 
@@ -151,7 +152,15 @@ impl Plugin for Corral {
             for (value, sample) in frame.iter_mut().zip(channel_samples.iter_mut()) {
                 *value = *sample;
             }
-            if let Some(detection) = self.chain.process_frame(&mut frame, gain) {
+            if let Some(detection) = self.chain.process_frame(
+                &mut frame,
+                // Phase 6 adds the Shift and Mix parameters.
+                Settings {
+                    gain,
+                    mix: 0.0,
+                    shift: 0,
+                },
+            ) {
                 last_detection = Some(detection);
             }
             for (sample, value) in channel_samples.iter_mut().zip(frame) {

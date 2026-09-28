@@ -6,8 +6,9 @@
 use std::f64::consts::TAU;
 use std::path::Path;
 
-use corral_dsp::chain::Chain;
+use corral_dsp::chain::{Chain, Settings};
 use corral_dsp::eval::{EstFrame, Scores};
+use corral_dsp::pitch::Detection;
 
 /// A tone whose fundamental follows `freq_at(t)`, with harmonics at
 /// amplitude 1/k. Each harmonic's phase is integrated per sample, so pitch
@@ -59,19 +60,48 @@ pub fn midi_to_hz(midi: f64) -> f64 {
     440.0 * 2f64.powf((midi - 69.0) / 12.0)
 }
 
+/// Unity gain, dry only: the output is the input delayed by the latency.
+pub const DRY: Settings = Settings {
+    gain: 1.0,
+    mix: 0.0,
+    shift: 0,
+};
+
 /// Runs a `Chain` over a mono signal at unity gain and returns one estimate
 /// per hop, timed at the analysis window's centre.
 pub fn track(signal: &[f32], sample_rate: f32) -> Vec<EstFrame> {
     let mut chain = Chain::new(sample_rate);
     signal
         .iter()
-        .filter_map(|&s| chain.process_frame(&mut [s], 1.0))
+        .filter_map(|&s| chain.process_frame(&mut [s], DRY))
         .map(|d| EstFrame {
             time_s: d.window_centre as f64 / f64::from(sample_rate),
             f0_hz: d.f0_hz,
             voiced: d.voiced,
         })
         .collect()
+}
+
+/// Runs a `Chain` over a mono signal with `settings(i)` for sample `i`.
+/// Returns the output (the same length as the input, not latency
+/// compensated) and every detection.
+pub fn process(
+    signal: &[f32],
+    sample_rate: f32,
+    settings: impl Fn(usize) -> Settings,
+) -> (Vec<f32>, Vec<Detection>) {
+    let mut chain = Chain::new(sample_rate);
+    let mut detections = Vec::new();
+    let output = signal
+        .iter()
+        .enumerate()
+        .map(|(i, &s)| {
+            let mut frame = [s];
+            detections.extend(chain.process_frame(&mut frame, settings(i)));
+            frame[0]
+        })
+        .collect();
+    (output, detections)
 }
 
 /// Prints one line of scores in a fixed format, e.g.

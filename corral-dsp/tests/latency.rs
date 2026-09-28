@@ -3,7 +3,7 @@
 
 mod common;
 
-use common::{harmonic_tone, midi_to_hz};
+use common::{DRY, harmonic_tone, midi_to_hz};
 use corral_dsp::chain::Chain;
 
 /// A detection is "stable" when it and the next few are all correct.
@@ -25,7 +25,7 @@ fn onset_to_stable_detection() {
             let (window_len, hop_len) = (chain.window_len(), chain.hop_len());
             let correct: Vec<(u64, bool)> = signal
                 .iter()
-                .filter_map(|&s| chain.process_frame(&mut [s], 1.0))
+                .filter_map(|&s| chain.process_frame(&mut [s], DRY))
                 .map(|d| {
                     let hop_end = d.window_centre + (window_len / 2) as u64;
                     let cents = 1200.0 * (d.f0_hz / freq as f32).log2();
