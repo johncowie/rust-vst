@@ -1134,6 +1134,11 @@ assert_process_allocs = ["nice-plug/assert_process_allocs"]
   - Pass `note_readout.clone()` to `CorralEditor::new`.
 - **Add to `impl Plugin`**, matching nice-plug 0.4's `initialize` signature:
 
+  > **Implementation note:** nice-plug 0.4.2 calls this hook `activate` with an
+  > `ActivateContext` (`nice-plug-core-0.4.2/src/plugin.rs:246-258`), not
+  > `initialize`/`InitContext`. It has the same contract: off the audio thread,
+  > always followed by `reset()`. The code uses `activate`.
+
 ```rust
     fn initialize(
         &mut self,
@@ -1260,18 +1265,18 @@ still work and are just listed.
 
 #### Automated Verification:
 
-- [ ] `mise run check` exits 0
-- [ ] `mise run build-universal` succeeds, and
+- [x] `mise run check` exits 0
+- [x] `mise run build-universal` succeeds, and
       `lipo -archs target/bundled/Corral.vst3/Contents/MacOS/Corral` prints
       `x86_64 arm64`
-- [ ] `cargo build -p corral --features assert_process_allocs` succeeds
-- [ ] The IDs are intact: `grep -c '#\[id = "gain"\]' corral/src/lib.rs` and
+- [x] `cargo build -p corral --features assert_process_allocs` succeeds
+- [x] The IDs are intact: `grep -c '#\[id = "gain"\]' corral/src/lib.rs` and
       `grep -c JCowieCorral0001 corral/src/lib.rs` each print 1
-- [ ] Reading `process()` shows no allocating or locking calls. The only
+- [x] Reading `process()` shows no allocating or locking calls. The only
       calls are `smoothed.next()`, `Chain::process_frame`, `note::pack` and
       `nearest_note` (arithmetic only), two relaxed atomic stores, `is_open()`
       and `request_repaint()`.
-- [ ] `mise tasks` lists `install-debug`
+- [x] `mise tasks` lists `install-debug`
 
 #### Manual Verification:
 

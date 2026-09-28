@@ -12,18 +12,19 @@ run = "cargo xtask bundle corral --release"
 description = "Bundle corral as universal (arm64 + x86_64) macOS VST3 and CLAP (release)"
 run = "cargo xtask bundle-universal corral --release"
 
-[tasks.install]
-description = "Build the universal VST3, ad-hoc sign it, and install it to ~/Library/Audio/Plug-Ins/VST3 (quit Ableton Live first)"
-run = [
-  # Exact process-name match. `pgrep -f` would match this script's own `sh -c`.
-  '''
+[tasks.require-live-closed]
+hide = true
+# Exact process-name match. `pgrep -f` would match this script's own `sh -c`.
+run = '''
 if pgrep -xq Live; then
-  echo "Ableton Live is running. Quit Ableton Live first, then run 'mise run install' again." >&2
+  echo "Ableton Live is running. Quit Ableton Live first, then run 'mise run install' (or 'install-debug') again." >&2
   exit 1
 fi
-''',
-  { task = "build-universal" },
-  '''
+'''
+
+[tasks.copy-bundle]
+hide = true
+run = '''
 set -eu
 bundle=target/bundled/Corral.vst3
 dest="$HOME/Library/Audio/Plug-Ins/VST3"
@@ -38,7 +39,18 @@ mkdir -p "$dest"
 rm -rf "$dest/Corral.vst3"
 cp -R "$bundle" "$dest/"
 echo "Installed $dest/Corral.vst3"
-''',
+'''
+
+[tasks.install]
+description = "Build the universal VST3, ad-hoc sign it, and install it to ~/Library/Audio/Plug-Ins/VST3 (quit Ableton Live first)"
+run = [{ task = "require-live-closed" }, { task = "build-universal" }, { task = "copy-bundle" }]
+
+[tasks.install-debug]
+description = "Build a debug universal VST3 with nice-plug's allocation assertions (aborts Live if process() allocates), sign it and install it (quit Ableton Live first)"
+run = [
+  { task = "require-live-closed" },
+  "cargo xtask bundle-universal corral --features assert_process_allocs",
+  { task = "copy-bundle" },
 ]
 
 [tasks.fmt]

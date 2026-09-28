@@ -15,5 +15,9 @@ nice-plug-egui = "0.5"
 # Without them every label renders blank.
 egui = { version = "0.36", features = ["default_fonts"] }
 
+[features]
+# Debug builds only: aborts the host if process() allocates. See `mise run install-debug`.
+assert_process_allocs = ["nice-plug/assert_process_allocs"]
+
 [lints]
 workspace = true

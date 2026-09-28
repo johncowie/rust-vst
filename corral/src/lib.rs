@@ -1,12 +1,12 @@
 use std::sync::Arc;
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicU32, Ordering};
 
 use nice_plug::prelude::*;
 use nice_plug_egui::{
     EguiEditor, EguiEditorState, EguiNiceSettings, RepaintNotifier, create_egui_editor,
 };
 
-use corral_dsp::gain;
+use corral_dsp::{chain::Chain, gain, note};
 
 use crate::editor::CorralEditor;
 
@@ -14,7 +14,7 @@ mod editor;
 
 const MAX_GAIN_DB: f32 = 12.0;
 
-/// Stereo gain. The −60 dB floor is treated as silence ("-inf").
+/// Stereo gain and pitch detection. The −60 dB floor is treated as silence ("-inf").
 pub struct Corral {
     params: Arc<CorralParams>,
     editor_state: Arc<EguiEditorState>,
@@ -24,6 +24,13 @@ pub struct Corral {
     /// The last value stored in `readout_gain`, so the audio thread only
     /// stores and repaints when it changes.
     last_readout_gain: f32,
+    /// The DSP chain. Rebuilt for the host's sample rate in `activate()`.
+    chain: Chain,
+    /// The last hop's note, packed with `note::pack`; `note::UNVOICED` when
+    /// nothing is detected. Shown by the editor.
+    note_readout: Arc<AtomicU32>,
+    /// The last value stored in `note_readout`.
+    last_note_readout: u32,
     /// Held until the host asks for the editor, which it does once.
     initial_editor: Option<CorralEditor>,
 }
@@ -40,14 +47,24 @@ impl Default for Corral {
         let params = Arc::new(CorralParams::default());
         let unity = util::db_to_gain(0.0);
         let readout_gain = Arc::new(AtomicF32::new(unity));
+        let note_readout = Arc::new(AtomicU32::new(note::UNVOICED));
 
         Self {
-            initial_editor: Some(CorralEditor::new(params.clone(), readout_gain.clone())),
+            initial_editor: Some(CorralEditor::new(
+                params.clone(),
+                readout_gain.clone(),
+                note_readout.clone(),
+            )),
             params,
             editor_state: editor::default_state(),
             repaint_notifier: RepaintNotifier::new(),
             readout_gain,
             last_readout_gain: unity,
+            // A placeholder: the host always calls `activate()`, which
+            // replaces it, before `process()`.
+            chain: Chain::new(48_000.0),
+            note_readout,
+            last_note_readout: note::UNVOICED,
         }
     }
 }
@@ -101,6 +118,21 @@ impl Plugin for Corral {
         )
     }
 
+    fn activate(
+        &mut self,
+        _audio_io_layout: &AudioIOLayout,
+        buffer_config: &BufferConfig,
+        _context: &mut impl ActivateContext<Self>,
+    ) -> bool {
+        // Allocates the detector's buffers and FFT plans, off the audio thread.
+        self.chain = Chain::new(buffer_config.sample_rate);
+        true
+    }
+
+    fn reset(&mut self) {
+        self.chain.reset();
+    }
+
     fn process(
         &mut self,
         buffer: &mut Buffer,
@@ -108,28 +140,53 @@ impl Plugin for Corral {
         _context: &mut impl ProcessContext<Self>,
     ) -> ProcessStatus {
         let mut last_gain = None;
+        let mut last_detection = None;
 
-        for channel_samples in buffer.iter_samples() {
+        for mut channel_samples in buffer.iter_samples() {
             // One smoothed value per frame, shared by both channels.
             let gain = self.params.gain.smoothed.next();
 
-            for sample in channel_samples {
-                *sample = gain::apply_gain(*sample, gain);
+            // Stereo in and out is the only layout, so the frame always has two channels.
+            let mut frame = [0.0; 2];
+            for (value, sample) in frame.iter_mut().zip(channel_samples.iter_mut()) {
+                *value = *sample;
+            }
+            if let Some(detection) = self.chain.process_frame(&mut frame, gain) {
+                last_detection = Some(detection);
+            }
+            for (sample, value) in channel_samples.iter_mut().zip(frame) {
+                *sample = value;
             }
             last_gain = Some(gain);
         }
 
-        // Share the gain with the readout once per buffer, only when it changes.
-        // It's stored even while the window is closed, so the readout is right
-        // when it opens. Both calls are single atomic stores.
+        // Share readouts with the editor once per buffer, only when they change.
+        // They're stored even while the window is closed, so it's right when it
+        // opens. Each is a single atomic store. A buffer with no hop boundary
+        // leaves the note as it was.
+        let mut changed = false;
         if let Some(gain) = last_gain
             && gain != self.last_readout_gain
         {
             self.last_readout_gain = gain;
             self.readout_gain.store(gain, Ordering::Relaxed);
-            if self.editor_state.is_open() {
-                self.repaint_notifier.request_repaint();
+            changed = true;
+        }
+        if let Some(detection) = last_detection {
+            let packed = note::pack(
+                detection
+                    .voiced
+                    .then(|| note::nearest_note(detection.f0_hz))
+                    .flatten(),
+            );
+            if packed != self.last_note_readout {
+                self.last_note_readout = packed;
+                self.note_readout.store(packed, Ordering::Relaxed);
+                changed = true;
             }
+        }
+        if changed && self.editor_state.is_open() {
+            self.repaint_notifier.request_repaint();
         }
 
         ProcessStatus::Normal
