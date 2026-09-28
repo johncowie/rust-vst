@@ -4,8 +4,8 @@
 mod common;
 
 use common::{
-    from_scale_step, harmonic_tone, max_jump, midi_to_hz, output_estimates, print_cents, process,
-    rms, scale, scale_freq_at, scale_seconds, white_noise,
+    assert_no_clicks, from_scale_step, harmonic_tone, midi_to_hz, output_estimates, print_cents,
+    process, rms, scale, scale_freq_at, scale_seconds, white_noise,
 };
 use corral_dsp::chain::{Chain, Settings};
 use corral_dsp::eval::{CentsStats, RefFrame, cents_stats};
@@ -23,8 +23,6 @@ const LEVEL_DB: f64 = 1.5;
 const EDGE_S: f64 = 0.15;
 /// …and within this of a scale step.
 const STEP_EXCLUSION_S: f64 = 0.05;
-/// A jump above CLICK_MARGIN × ratio × the dry signal's own largest jump is a click.
-const CLICK_MARGIN: f32 = 1.5;
 
 const SAMPLE_RATES: [f32; 2] = [44_100.0, 48_000.0];
 const TOLERANCE_CENTS: f64 = 25.0;
@@ -196,16 +194,6 @@ fn level_is_preserved() {
     assert!(failed.is_empty(), "\n{}", failed.join("\n"));
 }
 
-/// Asserts the output's largest sample-to-sample jump is within
-/// `CLICK_MARGIN · ratio · max_jump(input)`.
-fn assert_no_clicks(name: &str, signal: &[f32], output: &[f32], shift: i32) {
-    let dry = max_jump(signal);
-    let threshold = CLICK_MARGIN * shift::ratio(shift as f32) * dry;
-    let measured = max_jump(output);
-    println!("clicks {name}: max jump {measured:.4}, threshold {threshold:.4} (dry {dry:.4})");
-    assert!(measured <= threshold, "{name}: {measured} > {threshold}");
-}
-
 #[test]
 fn no_clicks_at_voicing_transitions() {
     for sample_rate in SAMPLE_RATES {
@@ -222,7 +210,7 @@ fn no_clicks_at_voicing_transitions() {
         }
         bursts.extend(&gap);
         let (output, _) = process(&bursts, sample_rate, |_| wet(4));
-        assert_no_clicks(&format!("bursts {sample_rate} Hz"), &bursts, &output, 4);
+        assert_no_clicks(&format!("bursts {sample_rate} Hz"), &bursts, &output, 4.0);
 
         // −6 dBFS down to −66 and back over 2 s: the level gate closes the
         // wet path and reopens it while the tone carries on.
@@ -237,7 +225,7 @@ fn no_clicks_at_voicing_transitions() {
             })
             .collect();
         let (output, _) = process(&ramp, sample_rate, |_| wet(4));
-        assert_no_clicks(&format!("level ramp {sample_rate} Hz"), &ramp, &output, 4);
+        assert_no_clicks(&format!("level ramp {sample_rate} Hz"), &ramp, &output, 4.0);
     }
 }
 
@@ -257,7 +245,7 @@ fn no_clicks_during_a_shift_sweep() {
             &format!("shift sweep {sample_rate} Hz"),
             &signal,
             &output,
-            12,
+            12.0,
         );
 
         // Mix 0 → 1 → 0 over 2 s at +4.
@@ -266,6 +254,11 @@ fn no_clicks_during_a_shift_sweep() {
         let (output, _) = process(&signal, sample_rate, |i| {
             common::fixed(4, 1.0 - (2.0 * i as f32 / len - 1.0).abs())
         });
-        assert_no_clicks(&format!("mix sweep {sample_rate} Hz"), &signal, &output, 4);
+        assert_no_clicks(
+            &format!("mix sweep {sample_rate} Hz"),
+            &signal,
+            &output,
+            4.0,
+        );
     }
 }

@@ -6,6 +6,8 @@ mod common;
 
 use common::{DRY, harmonic_tone, midi_to_hz, process};
 use corral_dsp::chain::Chain;
+use corral_dsp::harmony::Scale;
+use corral_dsp::shift::DEFAULT_GLIDE_S;
 
 /// A detection is "stable" when it and the next few are all correct.
 const STABLE_RUN: usize = 5;
@@ -96,20 +98,26 @@ fn reported_latency_matches_the_measured_delay() {
         ));
         signal.extend(&silence);
 
-        for mix in [1.0, 0.0] {
-            let settings = common::fixed(4, mix);
+        for (name, settings) in [
+            ("mix 1", common::fixed(4, 1.0)),
+            ("mix 0", common::fixed(4, 0.0)),
+            (
+                "key C major, mix 1",
+                common::diatonic(0, Scale::Major, DEFAULT_GLIDE_S, 1.0),
+            ),
+        ] {
             let (output, _) = process(&signal, sample_rate, |_| settings);
             let lag = measured_delay(&signal, &output, sample_rate);
             println!(
-                "delay {sample_rate} Hz, mix {mix}: measured {lag}, reported {latency} samples ({:.1} ms)",
+                "delay {sample_rate} Hz, {name}: measured {lag}, reported {latency} samples ({:.1} ms)",
                 latency as f32 / sample_rate * 1000.0
             );
-            if mix == 0.0 {
-                assert_eq!(lag, latency, "{sample_rate} Hz, mix 0");
+            if settings.mix == 0.0 {
+                assert_eq!(lag, latency, "{sample_rate} Hz, {name}");
             } else {
                 assert!(
                     lag.abs_diff(latency) <= hop,
-                    "{sample_rate} Hz, mix {mix}: {lag} vs {latency}"
+                    "{sample_rate} Hz, {name}: {lag} vs {latency}"
                 );
             }
         }

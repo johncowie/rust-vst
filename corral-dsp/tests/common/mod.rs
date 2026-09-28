@@ -6,11 +6,11 @@
 use std::f64::consts::TAU;
 use std::path::Path;
 
-use corral_dsp::chain::{Chain, Settings};
+use corral_dsp::chain::{Chain, Harmony, Settings};
 use corral_dsp::eval::{CentsStats, EstFrame, Scores};
 use corral_dsp::harmony::{IntervalSource, Scale};
 use corral_dsp::pitch::Detection;
-use corral_dsp::shift::DEFAULT_GLIDE_S;
+use corral_dsp::shift::{self, DEFAULT_GLIDE_S};
 
 /// A tone whose fundamental follows `freq_at(t)`, with harmonics at
 /// amplitude 1/k. Each harmonic's phase is integrated per sample, so pitch
@@ -84,6 +84,19 @@ pub fn scale(sample_rate: f32) -> Vec<f32> {
     harmonic_tone(sample_rate, scale_seconds(), scale_freq_at, 12, 0.5)
 }
 
+/// Legato notes (MIDI), `note_s` each, as a phase-continuous 12-harmonic
+/// tone at peak 0.5.
+pub fn note_sequence(sample_rate: f32, midis: &[f64], note_s: f64) -> Vec<f32> {
+    let seconds = note_s * midis.len() as f64;
+    harmonic_tone(
+        sample_rate,
+        seconds,
+        |t| midi_to_hz(midis[((t / note_s) as usize).min(midis.len() - 1)]),
+        12,
+        0.5,
+    )
+}
+
 /// How far `t` is from the nearest scale step (including the start and end).
 pub fn from_scale_step(t: f64) -> f64 {
     (t - (t / SCALE_NOTE_S).round() * SCALE_NOTE_S).abs()
@@ -154,6 +167,55 @@ pub fn process(
     (output, detections)
 }
 
+/// One hop of a traced run: the sample it ended on, its detection and
+/// the chain's harmony choice after it.
+#[derive(Clone, Copy, Debug)]
+pub struct Hop {
+    pub sample: usize,
+    pub detection: Detection,
+    pub harmony: Option<Harmony>,
+}
+
+/// A traced run: the output, every hop, and the glide's value per sample.
+pub struct Trace {
+    pub output: Vec<f32>,
+    pub hops: Vec<Hop>,
+    pub shifts: Vec<f32>,
+}
+
+/// Like [`process`], recording `chain.harmony()` on each hop and
+/// `chain.shift_semitones()` on each sample.
+pub fn process_traced(
+    signal: &[f32],
+    sample_rate: f32,
+    settings: impl Fn(usize) -> Settings,
+) -> Trace {
+    let mut chain = Chain::new(sample_rate);
+    let mut hops = Vec::new();
+    let mut shifts = Vec::with_capacity(signal.len());
+    let output = signal
+        .iter()
+        .enumerate()
+        .map(|(i, &s)| {
+            let mut frame = [s];
+            if let Some(detection) = chain.process_frame(&mut frame, settings(i)) {
+                hops.push(Hop {
+                    sample: i,
+                    detection,
+                    harmony: chain.harmony(),
+                });
+            }
+            shifts.push(chain.shift_semitones());
+            frame[0]
+        })
+        .collect();
+    Trace {
+        output,
+        hops,
+        shifts,
+    }
+}
+
 /// Pitch estimates of a chain's output, with each time moved back by the
 /// chain's latency so it lines up with the input.
 pub fn output_estimates(output: &[f32], sample_rate: f32, latency: usize) -> Vec<EstFrame> {
@@ -197,6 +259,19 @@ pub fn max_jump(signal: &[f32]) -> f32 {
         .windows(2)
         .map(|w| (w[1] - w[0]).abs())
         .fold(0.0, f32::max)
+}
+
+/// A jump above CLICK_MARGIN × ratio × the dry signal's own largest jump is a click.
+pub const CLICK_MARGIN: f32 = 1.5;
+
+/// Asserts the output's largest sample-to-sample jump is within
+/// `CLICK_MARGIN · ratio · max_jump(input)`.
+pub fn assert_no_clicks(name: &str, signal: &[f32], output: &[f32], max_semitones: f32) {
+    let dry = max_jump(signal);
+    let threshold = CLICK_MARGIN * shift::ratio(max_semitones) * dry;
+    let measured = max_jump(output);
+    println!("clicks {name}: max jump {measured:.4}, threshold {threshold:.4} (dry {dry:.4})");
+    assert!(measured <= threshold, "{name}: {measured} > {threshold}");
 }
 
 /// Prints one line of scores in a fixed format, e.g.

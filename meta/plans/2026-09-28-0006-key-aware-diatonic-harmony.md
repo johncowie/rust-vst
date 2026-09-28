@@ -748,30 +748,94 @@ If any assertion misses:
 
 #### Automated Verification:
 
-- [ ] Harmony tests pass and print scores:
+- [x] Harmony tests pass and print scores:
       `cargo test -p corral-dsp --test harmony -- --nocapture`
-- [ ] Shifter tests still pass after moving the click helpers:
+- [x] Shifter tests still pass after moving the click helpers:
       `cargo test -p corral-dsp --test shifter`
-- [ ] `mise run check` passes
+- [x] `mise run check` passes
 
 #### Manual Verification:
 
 - [ ] Listen to the scale output (`mise run analyse` in Phase 5, or a
       test-written WAV): the thirds sound right and the glides are
       smooth
-- [ ] Results recorded below
+- [x] Results recorded below
 
 #### Phase 4 results (for Phase 7's README)
 
-_To be filled in during implementation:_
+**Tuning: the transition exclusion is 120 ms, not 100 ms.** The
+developer chose this over lowering the default glide.
 
-- the scale shares at 44.1 and 48 kHz;
-- the vibrato change counts;
-- the scoop change counts and times;
-- the legato change delay;
-- the out-of-key medians;
-- the click figures;
-- any tuning, with its reason.
+- At 100 ms and the default 50 ms glide, the scales scored:
+  - C major 0.936 (44.1 kHz) and 0.949 (48 kHz);
+  - A minor 0.936 and 0.944.
+- Every miss sat in the glide's tail, 100–165 ms after a semitone step
+  (E→F, B→C). The hold puts the interval change about 95–100 ms after
+  the audio, as the work item's Timing note says. The glide then needs
+  1.39τ (69 ms) to come within 25¢. The plan's 96–97% estimate missed the
+  detector's half-window lag.
+- The other levers can't fix it:
+  - `SETTLE_CENTS` doesn't affect clean steps;
+  - `HOLD_S` at 55 ms saves one hop at most, and 10 hops at 44.1 kHz would
+    let the 4.5 Hz vibrato unit test (a run of 10) through.
+- Measured alternatives (lowest of the four cases):
+
+  | | excl. 100 ms | 120 ms | 130 ms | 150 ms |
+  |---|---|---|---|---|
+  | glide 20 ms | 0.979 | 0.995 | 1.000 | 1.000 |
+  | glide 30 ms | 0.966 | 0.985 | 1.000 | 1.000 |
+  | glide 40 ms | 0.953 | 0.971 | 0.984 | 1.000 |
+  | glide 50 ms | 0.936 | 0.956 | 0.967 | 0.987 |
+
+- The out-of-key test shares the constant. It passed at 100 ms too.
+
+Scores (`cargo test -p corral-dsp --test harmony -- --nocapture`):
+
+- **Scales, share within ±25¢** (205 voiced frames; medians −0.4…+0.5¢):
+
+  | | 44.1 kHz | 48 kHz |
+  |---|---|---|
+  | C major, glide 50 ms | 0.956 | 0.966 |
+  | C major, glide 0 | 1.000 | 1.000 |
+  | A minor, glide 50 ms | 0.961 | 0.966 |
+  | A minor, glide 0 | 1.000 | 1.000 |
+
+- **Vibrato** ±100¢ at 5 and 7 Hz: 0 note changes at both rates.
+- **Scoops** from −200¢ into E4, onset on D4 (62), then exactly one change
+  to 64, after:
+
+  | scoop | 44.1 kHz | 48 kHz |
+  |---|---|---|
+  | 50 ms | 88.9 ms | 84.0 ms |
+  | 100 ms | 129.5 ms | 126.6 ms |
+  | 150 ms | 170.2 ms | 164.0 ms |
+
+- **Onset after silence** at Glide 250 ms: the first voiced hop takes the
+  sung note 30.6–36.7 ms into the note, and the shift is exactly +4 / +3
+  from that sample on.
+- **Legato C4 → D4:** the note changes 3 hops (17.4 ms) at 44.1 kHz and
+  2 hops (10.7 ms) at 48 kHz after D4 is first detected. The glide falls
+  monotonically; its steepest step is 0.000453 / 0.000417 semitones,
+  within 0.1% of `1 − c`.
+- **Out of key** (C major), medians: C#→F +0.2 / +0.3¢, Eb→F# +1.5 /
+  +0.4¢, F#→A# +0.4 / −0.6¢, G#→C −0.3 / +0.2¢, Bb→C# +3.4 / +1.9¢.
+  Share within ±25¢ 1.000 and voiced 1.000 everywhere. No hop is without
+  a harmony.
+- **Clicks**, max jump against threshold:
+
+  | case | 44.1 kHz | 48 kHz |
+  |---|---|---|
+  | scale, glide 50 ms | 0.2453 / 0.4827 | 0.2112 / 0.4443 |
+  | scale, glide 0 | 0.2373 / 0.4827 | 0.2110 / 0.4443 |
+  | A3 key/scale changes, glide 0 | 0.1092 / 0.2050 | 0.0997 / 0.1884 |
+  | A3 key/scale changes, glide 50 | 0.1092 / 0.2050 | 0.0997 / 0.1884 |
+  | scale, glide sweep + key C↔G | 0.2396 / 0.4827 | 0.2101 / 0.4443 |
+
+  Glide 0 doesn't click, so there is no 5 ms floor.
+- **Latency**, diatonic Key C, Mix 1: measured 1106 / 1202 against the
+  reported 1103 / 1200 (within a hop, like the fixed +4 run).
+- `Trace.hops` holds a `Hop { sample, detection, harmony }` rather than a
+  tuple, because the onset and legato tests need each hop's sample index.
 
 ---
 
