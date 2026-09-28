@@ -31,11 +31,7 @@ const TOLERANCE_CENTS: f64 = 25.0;
 const REF_HOP_S: f64 = 0.01;
 
 fn wet(shift: i32) -> Settings {
-    Settings {
-        gain: 1.0,
-        mix: 1.0,
-        shift,
-    }
+    common::fixed(shift, 1.0)
 }
 
 fn latency(sample_rate: f32) -> usize {
@@ -163,11 +159,7 @@ fn silence_noise_and_mix_zero_are_the_delayed_input() {
         let noise = white_noise(len, 0.25, 0x5EED);
         assert_delayed(&at("noise, mix 1"), &noise, sample_rate, wet(4));
 
-        let dry = Settings {
-            gain: 1.0,
-            mix: 0.0,
-            shift: 4,
-        };
+        let dry = common::fixed(4, 0.0);
         let a3 = harmonic_tone(sample_rate, 2.0, |_| midi_to_hz(57.0), 8, 0.5);
         assert_delayed(&at("A3, mix 0"), &a3, sample_rate, dry);
         assert_delayed(&at("scale, mix 0"), &scale(sample_rate), sample_rate, dry);
@@ -259,7 +251,7 @@ fn no_clicks_during_a_shift_sweep() {
         let signal = harmonic_tone(sample_rate, 5.0, |_| a3, 8, 0.5);
         let step_len = (0.2 * sr) as usize;
         let (output, _) = process(&signal, sample_rate, |i| {
-            wet((shift::MIN + (i / step_len) as i32).min(shift::MAX))
+            wet((-12 + (i / step_len) as i32).min(12))
         });
         assert_no_clicks(
             &format!("shift sweep {sample_rate} Hz"),
@@ -271,10 +263,8 @@ fn no_clicks_during_a_shift_sweep() {
         // Mix 0 → 1 → 0 over 2 s at +4.
         let signal = harmonic_tone(sample_rate, 2.0, |_| a3, 8, 0.5);
         let len = signal.len() as f32;
-        let (output, _) = process(&signal, sample_rate, |i| Settings {
-            gain: 1.0,
-            mix: 1.0 - (2.0 * i as f32 / len - 1.0).abs(),
-            shift: 4,
+        let (output, _) = process(&signal, sample_rate, |i| {
+            common::fixed(4, 1.0 - (2.0 * i as f32 / len - 1.0).abs())
         });
         assert_no_clicks(&format!("mix sweep {sample_rate} Hz"), &signal, &output, 4);
     }

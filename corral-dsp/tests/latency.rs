@@ -5,7 +5,7 @@
 mod common;
 
 use common::{DRY, harmonic_tone, midi_to_hz, process};
-use corral_dsp::chain::{Chain, Settings};
+use corral_dsp::chain::Chain;
 
 /// A detection is "stable" when it and the next few are all correct.
 const STABLE_RUN: usize = 5;
@@ -97,11 +97,7 @@ fn reported_latency_matches_the_measured_delay() {
         signal.extend(&silence);
 
         for mix in [1.0, 0.0] {
-            let settings = Settings {
-                gain: 1.0,
-                mix,
-                shift: 4,
-            };
+            let settings = common::fixed(4, mix);
             let (output, _) = process(&signal, sample_rate, |_| settings);
             let lag = measured_delay(&signal, &output, sample_rate);
             println!(

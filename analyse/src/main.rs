@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use corral_dsp::chain::{Chain, Settings};
+use corral_dsp::harmony::IntervalSource;
 use corral_dsp::shift;
 use hound::{SampleFormat, WavReader, WavSpec, WavWriter};
 
@@ -175,7 +176,10 @@ fn run<R: Read, W: Write + Seek, C: Write>(
         gain: 10f32.powf(options.gain_db / 20.0),
         // Exactly 0.0 and 1.0 at 0 % and 100 %.
         mix: options.mix_percent / 100.0,
-        shift: options.shift,
+        // --shift stays a fixed interval until --key/--scale/--glide replace
+        // it (plan 0006, Phase 5).
+        interval: IntervalSource::Fixed(options.shift),
+        glide_s: shift::DEFAULT_GLIDE_S,
     };
     let sample_rate = f64::from(spec.sample_rate);
     let mut chain = Chain::new(spec.sample_rate as f32);
@@ -552,7 +556,8 @@ mod tests {
         let settings = Settings {
             gain: 1.0,
             mix: 0.0,
-            shift: 0,
+            interval: IntervalSource::Fixed(0),
+            glide_s: shift::DEFAULT_GLIDE_S,
         };
         let edge = 0.15;
         let duration = output.len() as f64 / f64::from(SAMPLE_RATE);

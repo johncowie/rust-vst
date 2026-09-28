@@ -7,6 +7,7 @@ use nice_plug_egui::{
 };
 
 use corral_dsp::chain::{Chain, Settings};
+use corral_dsp::harmony::IntervalSource;
 use corral_dsp::{gain, note, shift};
 
 use crate::editor::CorralEditor;
@@ -174,7 +175,9 @@ impl Plugin for Corral {
             let settings = Settings {
                 gain,
                 mix: self.params.mix.smoothed.next(),
-                shift: self.params.shift.value(),
+                // Shift stays a fixed interval until Key/Scale/Glide replace it (plan 0006, Phase 6).
+                interval: IntervalSource::Fixed(self.params.shift.value()),
+                glide_s: shift::DEFAULT_GLIDE_S,
             };
 
             // Stereo in and out is the only layout, so the frame always has two channels.

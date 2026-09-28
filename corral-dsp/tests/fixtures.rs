@@ -7,7 +7,7 @@ mod common;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use corral_dsp::chain::{Chain, Settings};
+use corral_dsp::chain::Chain;
 use corral_dsp::eval::{EstFrame, RefFrame, Scores, cents_stats, parse_reference_csv, score};
 use corral_dsp::shift;
 
@@ -146,11 +146,7 @@ fn fixtures_meet_the_accuracy_thresholds() {
 #[test]
 fn shifted_fixtures_track_the_shifted_reference() {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
-    let settings = Settings {
-        gain: 1.0,
-        mix: 1.0,
-        shift: 4,
-    };
+    let settings = common::fixed(4, 1.0);
     let ratio = f64::from(shift::ratio(4.0));
     let mut failed = Vec::new();
     for name in SHIFTED_FIXTURES {

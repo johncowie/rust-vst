@@ -438,13 +438,32 @@ Tests:
 
 #### Automated Verification:
 
-- [ ] Stabiliser and glide tests pass: `cargo test -p corral-dsp --lib stabiliser shift`
-- [ ] `mise run lint` passes (Phase 3 fixes the callers; until then the
+- [x] Stabiliser and glide tests pass: `cargo test -p corral-dsp --lib stabiliser shift`
+- [x] `mise run lint` passes (Phase 3 fixes the callers; until then the
       workspace won't build, so Phases 2 and 3 land in one commit)
 
 #### Manual Verification:
 
-- [ ] The hop counts printed by a debug test (11 / 12) match the comment
+- [x] The hop counts printed by a debug test (11 / 12) match the comment
+
+#### Implementation notes (Phase 2)
+
+- **Glide state is an offset from the target.** The sketched
+  `current = target + c·(current − target)` stalls in f32: near 12
+  semitones a 250 ms glide at 96 kHz moves less than half an ulp per
+  sample once it is about 1¢ away, above `SNAP_SEMITONES`, so it never
+  lands. `Glide` stores `offset = current − target` and decays that
+  (`offset *= c`), which keeps its relative precision. Same maths and
+  API; a jump to 4.0 still gives exactly 4.0.
+- **`MIN`/`MAX`/`DEFAULT`/`format_shift`/`parse_shift` are kept** until
+  their last callers go: the plugin's `Shift` (Phase 6) and the
+  harness's `--shift` (Phase 5). Both now drive
+  `IntervalSource::Fixed(n)` at the default glide, rather than a
+  hard-coded `Fixed(4)`, so they keep working in between.
+  `SemitoneRamp` is gone.
+- Vibrato margin, per unit test: the longest run beyond 70¢ for ±100¢ at
+  4.5 Hz is 10 of 11 hops (44.1 kHz) and 11 of 12 (48 kHz); 5 Hz is
+  9 and 10; 7 Hz is 7 at both.
 
 ---
 
@@ -565,16 +584,32 @@ same threshold.
 
 #### Automated Verification:
 
-- [ ] All 0005 tests pass: `cargo test -p corral-dsp`
-- [ ] +4, fixture and latency figures are unchanged:
+- [x] All 0005 tests pass: `cargo test -p corral-dsp`
+- [x] +4, fixture and latency figures are unchanged:
       `cargo test -p corral-dsp --test shifter --test fixtures --test latency -- --nocapture`
       (compare with the README tables)
-- [ ] No allocation: `cargo test -p corral-dsp --test no_alloc`
-- [ ] `mise run check` passes
+- [x] No allocation: `cargo test -p corral-dsp --test no_alloc`
+- [x] `mise run check` passes
 
 #### Manual Verification:
 
-- [ ] The re-printed Shift-sweep click figure is noted for Phase 7
+- [x] The re-printed Shift-sweep click figure is noted for Phase 7
+
+#### Phase 3 results (for Phase 7's README)
+
+Compared line by line with the `--nocapture` output at `d6255b4`:
+
+- Every +4 figure, the fixture table and the latency figures are
+  identical.
+- The Shift-sweep click figures are 0.1046 at 44.1 kHz (unchanged,
+  threshold 0.2244) and **0.0962 at 48 kHz** (was 0.0690, threshold
+  0.2062).
+- Only the non-+4 fixed shifts at 48 kHz moved, and only slightly.
+  Before, they started with a 50 ms ramp from the old `DEFAULT = 4`;
+  now the glide jumps straight to the interval at onset:
+  - A3 +7 median +0.4¢ → +0.0¢;
+  - level scale +7 −2.95 → −2.94 dB, −12 −3.48 → −3.47 dB, −5 −1.78 →
+    −1.79 dB.
 
 ---
 

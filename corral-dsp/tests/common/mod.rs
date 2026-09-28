@@ -8,7 +8,9 @@ use std::path::Path;
 
 use corral_dsp::chain::{Chain, Settings};
 use corral_dsp::eval::{CentsStats, EstFrame, Scores};
+use corral_dsp::harmony::{IntervalSource, Scale};
 use corral_dsp::pitch::Detection;
+use corral_dsp::shift::DEFAULT_GLIDE_S;
 
 /// A tone whose fundamental follows `freq_at(t)`, with harmonics at
 /// amplitude 1/k. Each harmonic's phase is integrated per sample, so pitch
@@ -91,8 +93,29 @@ pub fn from_scale_step(t: f64) -> f64 {
 pub const DRY: Settings = Settings {
     gain: 1.0,
     mix: 0.0,
-    shift: 0,
+    interval: IntervalSource::Fixed(0),
+    glide_s: DEFAULT_GLIDE_S,
 };
+
+/// Unity gain, a fixed whole-semitone shift, the default glide.
+pub fn fixed(shift: i32, mix: f32) -> Settings {
+    Settings {
+        gain: 1.0,
+        mix,
+        interval: IntervalSource::Fixed(shift),
+        glide_s: DEFAULT_GLIDE_S,
+    }
+}
+
+/// Unity gain, a diatonic third in `key` (0 = C … 11 = B) and `scale`.
+pub fn diatonic(key: u8, scale: Scale, glide_s: f32, mix: f32) -> Settings {
+    Settings {
+        gain: 1.0,
+        mix,
+        interval: IntervalSource::Diatonic { key, scale },
+        glide_s,
+    }
+}
 
 /// Runs a `Chain` over a mono signal at unity gain and returns one estimate
 /// per hop, timed at the analysis window's centre.

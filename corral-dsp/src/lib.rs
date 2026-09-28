@@ -11,4 +11,5 @@ pub mod period;
 pub mod pitch;
 pub mod psola;
 pub mod shift;
+pub mod stabiliser;
 pub mod wet_gate;
