@@ -7,7 +7,7 @@ use nice_plug_egui::{
 };
 
 use corral_dsp::chain::{Chain, Settings};
-use corral_dsp::harmony::IntervalSource;
+use corral_dsp::harmony::{IntervalSource, Scale};
 use corral_dsp::{gain, note, shift};
 
 use crate::editor::CorralEditor;
@@ -16,8 +16,8 @@ mod editor;
 
 const MAX_GAIN_DB: f32 = 12.0;
 
-/// Stereo gain, pitch detection and a TD-PSOLA harmony. The −60 dB gain floor
-/// is treated as silence ("-inf").
+/// Stereo gain, pitch detection and a key-aware diatonic harmony. The −60 dB
+/// gain floor is treated as silence ("-inf").
 pub struct Corral {
     params: Arc<CorralParams>,
     editor_state: Arc<EguiEditorState>,
@@ -34,8 +34,75 @@ pub struct Corral {
     note_readout: Arc<AtomicU32>,
     /// The last value stored in `note_readout`.
     last_note_readout: u32,
+    /// The last hop's (stable note, harmony note), packed with
+    /// `note::pack_pair`; `note::UNVOICED` when nothing is sounding.
+    harmony_readout: Arc<AtomicU32>,
+    /// The last value stored in `harmony_readout`.
+    last_harmony_readout: u32,
     /// Held until the host asks for the editor, which it does once.
     initial_editor: Option<CorralEditor>,
+}
+
+/// The key of the harmony. Declared C…B, so `as u8` is the pitch class.
+/// The IDs are stored in saved sets and automation, so they must never change.
+#[derive(Enum, Clone, Copy, Debug, PartialEq, Eq)]
+enum KeyParam {
+    #[id = "c"]
+    #[name = "C"]
+    C,
+    #[id = "c-sharp"]
+    #[name = "C#"]
+    CSharp,
+    #[id = "d"]
+    #[name = "D"]
+    D,
+    #[id = "d-sharp"]
+    #[name = "D#"]
+    DSharp,
+    #[id = "e"]
+    #[name = "E"]
+    E,
+    #[id = "f"]
+    #[name = "F"]
+    F,
+    #[id = "f-sharp"]
+    #[name = "F#"]
+    FSharp,
+    #[id = "g"]
+    #[name = "G"]
+    G,
+    #[id = "g-sharp"]
+    #[name = "G#"]
+    GSharp,
+    #[id = "a"]
+    #[name = "A"]
+    A,
+    #[id = "a-sharp"]
+    #[name = "A#"]
+    ASharp,
+    #[id = "b"]
+    #[name = "B"]
+    B,
+}
+
+/// The IDs are stored in saved sets and automation, so they must never change.
+#[derive(Enum, Clone, Copy, Debug, PartialEq, Eq)]
+enum ScaleParam {
+    #[id = "major"]
+    #[name = "Major"]
+    Major,
+    #[id = "natural-minor"]
+    #[name = "Natural minor"]
+    NaturalMinor,
+}
+
+impl From<ScaleParam> for Scale {
+    fn from(scale: ScaleParam) -> Self {
+        match scale {
+            ScaleParam::Major => Scale::Major,
+            ScaleParam::NaturalMinor => Scale::NaturalMinor,
+        }
+    }
 }
 
 #[derive(Params)]
@@ -43,9 +110,16 @@ struct CorralParams {
     /// Linear gain. The ID is stored in saved sets and automation, so it must never change.
     #[id = "gain"]
     gain: FloatParam,
-    /// Whole semitones for the shifted voice. Chain ramps changes itself. ID must never change.
-    #[id = "shift"]
-    shift: IntParam,
+    /// The harmony's key. ID must never change.
+    #[id = "key"]
+    key: EnumParam<KeyParam>,
+    /// Major or natural minor. ID must never change.
+    #[id = "scale"]
+    scale: EnumParam<ScaleParam>,
+    /// The glide's time constant in ms. Not smoothed: Chain glides the
+    /// interval itself and caches the coefficient. ID must never change.
+    #[id = "glide"]
+    glide: FloatParam,
     /// Dry/wet, 0.0–1.0, shown as a percentage. ID must never change.
     #[id = "mix"]
     mix: FloatParam,
@@ -57,12 +131,14 @@ impl Default for Corral {
         let unity = util::db_to_gain(0.0);
         let readout_gain = Arc::new(AtomicF32::new(unity));
         let note_readout = Arc::new(AtomicU32::new(note::UNVOICED));
+        let harmony_readout = Arc::new(AtomicU32::new(note::UNVOICED));
 
         Self {
             initial_editor: Some(CorralEditor::new(
                 params.clone(),
                 readout_gain.clone(),
                 note_readout.clone(),
+                harmony_readout.clone(),
             )),
             params,
             editor_state: editor::default_state(),
@@ -74,6 +150,8 @@ impl Default for Corral {
             chain: Chain::new(48_000.0),
             note_readout,
             last_note_readout: note::UNVOICED,
+            harmony_readout,
+            last_harmony_readout: note::UNVOICED,
         }
     }
 }
@@ -91,17 +169,18 @@ impl Default for CorralParams {
             .with_unit(" dB")
             .with_value_to_string(Arc::new(gain::format_gain))
             .with_string_to_value(formatters::s2v_f32_gain_to_db()),
-            shift: IntParam::new(
-                "Shift",
-                shift::DEFAULT,
-                IntRange::Linear {
-                    min: shift::MIN,
-                    max: shift::MAX,
+            key: EnumParam::new("Key", KeyParam::C),
+            scale: EnumParam::new("Scale", ScaleParam::Major),
+            glide: FloatParam::new(
+                "Glide",
+                1000.0 * shift::DEFAULT_GLIDE_S,
+                FloatRange::Linear {
+                    min: 0.0,
+                    max: 1000.0 * shift::MAX_GLIDE_S,
                 },
             )
-            .with_unit(" st")
-            .with_value_to_string(Arc::new(shift::format_shift))
-            .with_string_to_value(Arc::new(shift::parse_shift)),
+            .with_unit(" ms")
+            .with_value_to_string(formatters::v2s_f32_rounded(0)),
             mix: FloatParam::new("Mix", 0.5, FloatRange::Linear { min: 0.0, max: 1.0 })
                 .with_smoother(SmoothingStyle::Linear(20.0))
                 .with_unit("%")
@@ -168,6 +247,12 @@ impl Plugin for Corral {
     ) -> ProcessStatus {
         let mut last_gain = None;
         let mut last_detection = None;
+        // Read once per buffer: none of them is smoothed.
+        let interval = IntervalSource::Diatonic {
+            key: self.params.key.value() as u8,
+            scale: self.params.scale.value().into(),
+        };
+        let glide_s = self.params.glide.value() / 1000.0;
 
         for mut channel_samples in buffer.iter_samples() {
             // One smoothed value per frame, shared by both channels.
@@ -175,9 +260,8 @@ impl Plugin for Corral {
             let settings = Settings {
                 gain,
                 mix: self.params.mix.smoothed.next(),
-                // Shift stays a fixed interval until Key/Scale/Glide replace it (plan 0006, Phase 6).
-                interval: IntervalSource::Fixed(self.params.shift.value()),
-                glide_s: shift::DEFAULT_GLIDE_S,
+                interval,
+                glide_s,
             };
 
             // Stereo in and out is the only layout, so the frame always has two channels.
@@ -197,7 +281,7 @@ impl Plugin for Corral {
         // Share readouts with the editor once per buffer, only when they change.
         // They're stored even while the window is closed, so it's right when it
         // opens. Each is a single atomic store. A buffer with no hop boundary
-        // leaves the note as it was.
+        // leaves the notes as they were.
         let mut changed = false;
         if let Some(gain) = last_gain
             && gain != self.last_readout_gain
@@ -216,6 +300,18 @@ impl Plugin for Corral {
             if packed != self.last_note_readout {
                 self.last_note_readout = packed;
                 self.note_readout.store(packed, Ordering::Relaxed);
+                changed = true;
+            }
+            // The chain keeps its choice through unvoiced hops; blank it here.
+            let packed = note::pack_pair(
+                self.chain
+                    .harmony()
+                    .filter(|_| detection.voiced)
+                    .map(|h| (h.note, h.note + h.interval)),
+            );
+            if packed != self.last_harmony_readout {
+                self.last_harmony_readout = packed;
+                self.harmony_readout.store(packed, Ordering::Relaxed);
                 changed = true;
             }
         }
@@ -243,3 +339,25 @@ impl Vst3Plugin for Corral {
 
 nice_export_clap!(Corral);
 nice_export_vst3!(Corral);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn key_variants_are_their_pitch_classes() {
+        let names = KeyParam::variants();
+        assert_eq!(names.len(), 12);
+        for (pitch_class, name) in names.iter().enumerate() {
+            let key = KeyParam::from_index(pitch_class);
+            assert_eq!(key as u8 as usize, pitch_class, "{name}");
+            assert_eq!(corral_dsp::harmony::format_key(key as u8), *name);
+        }
+    }
+
+    #[test]
+    fn scale_variants_map_to_the_dsp_scales() {
+        assert_eq!(Scale::from(ScaleParam::Major), Scale::Major);
+        assert_eq!(Scale::from(ScaleParam::NaturalMinor), Scale::NaturalMinor);
+    }
+}

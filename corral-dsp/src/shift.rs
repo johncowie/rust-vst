@@ -5,12 +5,6 @@ pub const MAX_GLIDE_S: f32 = 0.250;
 /// Closer than this (0.01¢) and the glide lands exactly on its target.
 const SNAP_SEMITONES: f32 = 1e-4;
 
-// The Shift parameter's range and display. Only the plugin's Shift still
-// uses them; they go when Key/Scale/Glide replace it (plan 0006, Phase 6).
-pub const MIN: i32 = -12;
-pub const MAX: i32 = 12;
-pub const DEFAULT: i32 = 4;
-
 /// 2^(semitones/12).
 pub fn ratio(semitones: f32) -> f32 {
     (semitones / 12.0).exp2()
@@ -70,25 +64,6 @@ impl Glide {
         }
         self.current()
     }
-}
-
-/// "+4", "0", "-12" (no unit; the parameter adds " st").
-pub fn format_shift(semitones: i32) -> String {
-    if semitones == 0 {
-        "0".to_string()
-    } else {
-        format!("{semitones:+}")
-    }
-}
-
-/// Accepts "+4", "4", "-5", " 7 st"; rejects out-of-range and non-integers.
-pub fn parse_shift(text: &str) -> Option<i32> {
-    let text = text.trim();
-    let number = text.strip_suffix("st").unwrap_or(text).trim_end();
-    number
-        .parse::<i32>()
-        .ok()
-        .filter(|semitones| (MIN..=MAX).contains(semitones))
 }
 
 #[cfg(test)]
@@ -219,37 +194,5 @@ mod tests {
             "{before} → {after}"
         );
         run_to(&mut glide, -3.0, coefficient);
-    }
-
-    #[test]
-    fn format_and_parse_round_trip_over_the_range() {
-        for semitones in MIN..=MAX {
-            let text = format_shift(semitones);
-            assert_eq!(parse_shift(&text), Some(semitones), "{text}");
-            assert_eq!(
-                parse_shift(&format!("{text} st")),
-                Some(semitones),
-                "{text}"
-            );
-        }
-        assert_eq!(format_shift(4), "+4");
-        assert_eq!(format_shift(0), "0");
-        assert_eq!(format_shift(-12), "-12");
-    }
-
-    #[test]
-    fn parse_accepts_the_documented_forms() {
-        assert_eq!(parse_shift("+4"), Some(4));
-        assert_eq!(parse_shift("4"), Some(4));
-        assert_eq!(parse_shift("-5"), Some(-5));
-        assert_eq!(parse_shift(" 7 st"), Some(7));
-        assert_eq!(parse_shift("7st"), Some(7));
-    }
-
-    #[test]
-    fn parse_rejects_out_of_range_and_non_integers() {
-        for text in ["13", "-13", "2.5", "4.0", "", "st", "four", "+", "1e1"] {
-            assert_eq!(parse_shift(text), None, "{text:?}");
-        }
     }
 }

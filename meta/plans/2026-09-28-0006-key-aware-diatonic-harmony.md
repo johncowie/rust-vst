@@ -982,9 +982,9 @@ enum ScaleParam {
 
 #### Automated Verification:
 
-- [ ] `cargo test -p corral` passes (the key-variant mapping test)
-- [ ] `mise run build-universal` succeeds
-- [ ] `mise run check` passes
+- [x] `cargo test -p corral` passes (the key-variant mapping test)
+- [x] `mise run build-universal` succeeds
+- [x] `mise run check` passes
 
 #### Manual Verification:
 
@@ -998,6 +998,14 @@ enum ScaleParam {
 - [ ] Changing Key, Scale and Glide while singing: no audible clicks,
       and the latency Live reports stays at 1103 / 1200 samples
 - [ ] Out-of-key notes (e.g. sing F#) still produce a harmony (A#)
+
+#### Implementation notes (Phase 6)
+
+- `shift::MIN`/`MAX`/`DEFAULT`/`format_shift`/`parse_shift` and their
+  tests are removed: the plugin's `Shift` was their last caller.
+- Key, Scale and Glide are read once per buffer (none is smoothed).
+- The key-variant test also checks each variant's name against
+  `harmony::format_key`.
 
 ---
 
