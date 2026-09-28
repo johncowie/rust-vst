@@ -954,12 +954,12 @@ its latency so the output WAV lines up with the input.
 
 #### Automated Verification:
 
-- [ ] `cargo test -p analyse` passes with no ignored tests.
-- [ ] `mise run analyse corral-dsp/tests/fixtures/vocadito_7_vibrato.wav target/analyse/v.wav --shift 4 --mix 100`
+- [x] `cargo test -p analyse` passes with no ignored tests.
+- [x] `mise run analyse corral-dsp/tests/fixtures/vocadito_7_vibrato.wav target/analyse/v.wav --shift 4 --mix 100`
       writes `target/analyse/v.wav` and `target/analyse/v.csv`. The WAV
       has the same frame count as the input (check with
       `afinfo target/analyse/v.wav` against the input).
-- [ ] `mise run check` passes.
+- [x] `mise run check` passes.
 
 #### Manual Verification:
 

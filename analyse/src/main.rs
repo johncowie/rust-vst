@@ -1,5 +1,7 @@
 //! Offline harness: runs the plugin's DSP chain over a WAV file, writing the
-//! processed audio (in the input's own format) and a per-hop pitch CSV.
+//! processed audio (in the input's own format) and a per-hop pitch CSV. The
+//! chain's latency is compensated, so the output lines up with the input and
+//! is the same length.
 
 use std::error::Error;
 use std::fs::{self, File};
@@ -8,37 +10,70 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use corral_dsp::chain::{Chain, Settings};
+use corral_dsp::shift;
 use hound::{SampleFormat, WavReader, WavSpec, WavWriter};
 
-const USAGE: &str = "usage: analyse <in.wav> [out.wav] [--gain-db <dB>]";
+const USAGE: &str =
+    "usage: analyse <in.wav> [out.wav] [--gain-db <dB>] [--shift <semitones>] [--mix <percent>]";
 
 /// Where output goes when no `out.wav` is given.
 const DEFAULT_OUTPUT_DIR: &str = "target/analyse";
+
+/// Matches the plugin's Mix default.
+const DEFAULT_MIX_PERCENT: f32 = 50.0;
+
+/// The processing controls, as given on the command line.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Options {
+    gain_db: f32,
+    /// Whole semitones, `shift::MIN..=shift::MAX`.
+    shift: i32,
+    /// 0.0–100.0.
+    mix_percent: f32,
+}
+
+impl Default for Options {
+    fn default() -> Self {
+        Self {
+            gain_db: 0.0,
+            shift: shift::DEFAULT,
+            mix_percent: DEFAULT_MIX_PERCENT,
+        }
+    }
+}
 
 #[derive(Debug, PartialEq)]
 struct Args {
     input: PathBuf,
     output: PathBuf,
-    gain_db: f32,
+    options: Options,
 }
 
 /// `None` for anything that doesn't match [`USAGE`].
 fn parse_args(args: impl IntoIterator<Item = String>) -> Option<Args> {
     let mut paths = Vec::new();
-    let mut gain_db = 0.0;
+    let mut options = Options::default();
     let mut args = args.into_iter();
     while let Some(arg) = args.next() {
-        if arg == "--gain-db" {
-            // Taken as-is, so negative values like "-6" work.
-            gain_db = args
-                .next()?
-                .parse()
-                .ok()
-                .filter(|db: &f32| db.is_finite())?;
-        } else if arg.starts_with("--") {
-            return None;
-        } else {
-            paths.push(PathBuf::from(arg));
+        // Values are taken as-is, so negative ones like "-6" work.
+        match arg.as_str() {
+            "--gain-db" => {
+                options.gain_db = args
+                    .next()?
+                    .parse()
+                    .ok()
+                    .filter(|db: &f32| db.is_finite())?;
+            }
+            "--shift" => options.shift = shift::parse_shift(&args.next()?)?,
+            "--mix" => {
+                options.mix_percent = args
+                    .next()?
+                    .parse()
+                    .ok()
+                    .filter(|percent| (0.0..=100.0).contains(percent))?;
+            }
+            _ if arg.starts_with("--") => return None,
+            _ => paths.push(PathBuf::from(arg)),
         }
     }
     let (input, output) = match <[PathBuf; 2]>::try_from(paths) {
@@ -55,7 +90,7 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Option<Args> {
     Some(Args {
         input,
         output,
-        gain_db,
+        options,
     })
 }
 
@@ -65,6 +100,8 @@ struct Summary {
     frames: u64,
     sample_rate: u32,
     channels: u16,
+    /// The chain's latency in frames, compensated in the output.
+    latency: usize,
 }
 
 /// The input formats the harness accepts.
@@ -105,12 +142,15 @@ impl Format {
 }
 
 /// Reads WAV from `input`, writes processed WAV (same spec) to `output` and the
-/// per-hop CSV to `csv`.
+/// per-hop CSV to `csv`. The chain's latency is compensated: `latency` frames
+/// of silence follow the input, and the first `latency` output frames are
+/// dropped, so the output has as many frames as the input and lines up with
+/// it. At 0 dB and 0 % mix the output is bit-identical to the input.
 fn run<R: Read, W: Write + Seek, C: Write>(
     input: R,
     output: W,
     csv: C,
-    gain_db: f32,
+    options: Options,
 ) -> Result<Summary, Box<dyn Error>> {
     let mut reader = WavReader::new(input)?;
     let spec = reader.spec();
@@ -130,32 +170,38 @@ fn run<R: Read, W: Write + Seek, C: Write>(
     let mut csv = BufWriter::new(csv);
     writeln!(csv, "time_s,f0_hz,confidence,voiced")?;
 
-    // Exactly 1.0 at 0 dB.
-    let gain = 10f32.powf(gain_db / 20.0);
+    let settings = Settings {
+        // Exactly 1.0 at 0 dB.
+        gain: 10f32.powf(options.gain_db / 20.0),
+        // Exactly 0.0 and 1.0 at 0 % and 100 %.
+        mix: options.mix_percent / 100.0,
+        shift: options.shift,
+    };
     let sample_rate = f64::from(spec.sample_rate);
     let mut chain = Chain::new(spec.sample_rate as f32);
+    let channels = usize::from(spec.channels);
+    let latency = chain.latency();
     let mut summary = Summary {
         hops: 0,
         voiced_hops: 0,
         frames: 0,
         sample_rate: spec.sample_rate,
         channels: spec.channels,
+        latency,
     };
 
-    for frame in samples.chunks_exact(usize::from(spec.channels)) {
+    let input_frames = samples.chunks_exact(channels);
+    let frames = input_frames.len();
+    let padding = std::iter::repeat_n(&[0.0; 2][..channels], latency);
+    for (index, frame) in input_frames.chain(padding).enumerate() {
         let mut buffer = [0.0; 2];
         let frame_out = &mut buffer[..frame.len()];
         frame_out.copy_from_slice(frame);
 
-        if let Some(detection) = chain.process_frame(
-            frame_out,
-            // Phase 5 adds --shift and --mix, with latency compensation.
-            Settings {
-                gain,
-                mix: 0.0,
-                shift: 0,
-            },
-        ) {
+        let detection = chain.process_frame(frame_out, settings);
+        // Only hops completed by real input are reported, as without
+        // compensation.
+        if let Some(detection) = detection.filter(|_| index < frames) {
             summary.hops += 1;
             summary.voiced_hops += usize::from(detection.voiced);
             writeln!(
@@ -168,6 +214,10 @@ fn run<R: Read, W: Write + Seek, C: Write>(
             )?;
         }
 
+        // The first `latency` output frames precede the input.
+        if index < latency {
+            continue;
+        }
         for &sample in frame_out.iter() {
             match format {
                 Format::Int {
@@ -196,7 +246,7 @@ fn analyse(args: &Args) -> Result<(PathBuf, Summary), Box<dyn Error>> {
     );
     let output = BufWriter::new(File::create(&args.output)?);
     let csv = File::create(&csv_path)?;
-    let summary = run(input, output, csv, args.gain_db)
+    let summary = run(input, output, csv, args.options)
         .map_err(|e| format!("{}: {e}", args.input.display()))?;
     Ok((csv_path, summary))
 }
@@ -218,6 +268,13 @@ fn main() -> ExitCode {
             println!(
                 "{} frames at {} Hz, {} ch: {} hops, {voiced_percent:.0}% voiced",
                 summary.frames, summary.sample_rate, summary.channels, summary.hops
+            );
+            println!(
+                "latency {} samples ({:.1} ms), compensated; shift {}, mix {}%",
+                summary.latency,
+                1000.0 * summary.latency as f64 / f64::from(summary.sample_rate),
+                shift::format_shift(args.options.shift),
+                args.options.mix_percent
             );
             ExitCode::SUCCESS
         }
@@ -244,6 +301,10 @@ mod tests {
             bits_per_sample,
             sample_format,
         }
+    }
+
+    fn spec_float(channels: u16) -> WavSpec {
+        spec(SampleFormat::Float, 32, channels)
     }
 
     /// One second of an interleaved 220 Hz tone at −6 dBFS, then full-scale
@@ -289,11 +350,28 @@ mod tests {
             .collect()
     }
 
+    /// Dry only, so the output is the input times the gain.
+    fn dry(gain_db: f32) -> Options {
+        Options {
+            gain_db,
+            mix_percent: 0.0,
+            ..Options::default()
+        }
+    }
+
+    /// Fully shifted, at the default shift.
+    fn wet() -> Options {
+        Options {
+            mix_percent: 100.0,
+            ..Options::default()
+        }
+    }
+
     /// Runs the harness on WAV bytes, returning the output WAV and CSV text.
-    fn run_bytes(wav: &[u8], gain_db: f32) -> Result<(Vec<u8>, String), Box<dyn Error>> {
+    fn run_bytes(wav: &[u8], options: Options) -> Result<(Vec<u8>, String), Box<dyn Error>> {
         let mut output = Cursor::new(Vec::new());
         let mut csv = Vec::new();
-        run(wav, &mut output, &mut csv, gain_db)?;
+        run(wav, &mut output, &mut csv, options)?;
         Ok((output.into_inner(), String::from_utf8(csv)?))
     }
 
@@ -304,13 +382,12 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "restored in phase 5 (latency compensation)"]
     fn int_output_is_bit_identical_at_0_db() {
         for bits in [16, 24] {
             for channels in [1, 2] {
                 let spec = spec(SampleFormat::Int, bits, channels);
                 let input = int_samples(bits, &test_signal(channels));
-                let (output, _) = run_bytes(&int_wav(spec, &input), 0.0).unwrap();
+                let (output, _) = run_bytes(&int_wav(spec, &input), dry(0.0)).unwrap();
                 let (out_spec, output) = read_ints(&output);
                 assert_eq!(out_spec, spec);
                 assert_eq!(output, input, "{bits}-bit, {channels} ch");
@@ -319,12 +396,11 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "restored in phase 5 (latency compensation)"]
     fn float_output_is_bit_identical_at_0_db() {
         for channels in [1, 2] {
-            let spec = spec(SampleFormat::Float, 32, channels);
+            let spec = spec_float(channels);
             let input = test_signal(channels);
-            let (output, _) = run_bytes(&float_wav(spec, &input), 0.0).unwrap();
+            let (output, _) = run_bytes(&float_wav(spec, &input), dry(0.0)).unwrap();
             let mut reader = WavReader::new(output.as_slice()).unwrap();
             assert_eq!(reader.spec(), spec);
             let output: Vec<f32> = reader.samples::<f32>().map(Result::unwrap).collect();
@@ -334,11 +410,10 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "restored in phase 5 (latency compensation)"]
     fn minus_6_db_halves_16_bit_samples() {
         let spec = spec(SampleFormat::Int, 16, 2);
         let input = int_samples(16, &test_signal(2));
-        let (output, _) = run_bytes(&int_wav(spec, &input), -6.0206).unwrap();
+        let (output, _) = run_bytes(&int_wav(spec, &input), dry(-6.0206)).unwrap();
         let (_, output) = read_ints(&output);
         for (i, o) in input.iter().zip(&output) {
             let expected = f64::from(*i) / 2.0;
@@ -351,7 +426,7 @@ mod tests {
         let spec = spec(SampleFormat::Int, 16, 1);
         let input = int_samples(16, &test_signal(1));
         let frames = input.len();
-        let (_, csv) = run_bytes(&int_wav(spec, &input), 0.0).unwrap();
+        let (_, csv) = run_bytes(&int_wav(spec, &input), dry(0.0)).unwrap();
 
         let chain = Chain::new(SAMPLE_RATE as f32);
         let (window, hop) = (chain.window_len(), chain.hop_len());
@@ -388,17 +463,19 @@ mod tests {
         ];
         for (name, spec, bits) in cases {
             let wav = int_wav(spec, &int_samples(bits, &signal));
-            assert!(run_bytes(&wav, 0.0).is_err(), "{name} was accepted");
+            assert!(run_bytes(&wav, dry(0.0)).is_err(), "{name} was accepted");
         }
         let wav = int_wav(
             spec(SampleFormat::Int, 16, 3),
             &int_samples(16, &test_signal(3)),
         );
-        assert!(run_bytes(&wav, 0.0).is_err(), "3 channels were accepted");
+        assert!(
+            run_bytes(&wav, dry(0.0)).is_err(),
+            "3 channels were accepted"
+        );
     }
 
     #[test]
-    #[ignore = "restored in phase 5 (latency compensation)"]
     fn committed_fixtures_pass_through_bit_identical_at_0_db() {
         let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../corral-dsp/tests/fixtures");
         let mut checked = 0;
@@ -408,7 +485,7 @@ mod tests {
                 continue;
             }
             let input = fs::read(&path).unwrap();
-            let (output, _) = run_bytes(&input, 0.0).unwrap();
+            let (output, _) = run_bytes(&input, dry(0.0)).unwrap();
             let (mut before, mut after) = (
                 WavReader::new(input.as_slice()).unwrap(),
                 WavReader::new(output.as_slice()).unwrap(),
@@ -439,6 +516,66 @@ mod tests {
         assert_eq!(checked, 7, "fixture WAVs in {}", dir.display());
     }
 
+    #[test]
+    fn output_is_the_same_length_as_the_input() {
+        for channels in [1, 2] {
+            let signal = test_signal(channels);
+            let spec = spec(SampleFormat::Int, 16, channels);
+            let input = int_samples(16, &signal);
+            let (output, _) = run_bytes(&int_wav(spec, &input), wet()).unwrap();
+            let (out_spec, output) = read_ints(&output);
+            assert_eq!(out_spec, spec);
+            assert_eq!(output.len(), input.len(), "int, {channels} ch");
+
+            let spec = spec_float(channels);
+            let (output, _) = run_bytes(&float_wav(spec, &signal), wet()).unwrap();
+            let reader = WavReader::new(output.as_slice()).unwrap();
+            assert_eq!(reader.spec(), spec);
+            assert_eq!(reader.len() as usize, signal.len(), "float, {channels} ch");
+        }
+    }
+
+    #[test]
+    fn mix_100_output_is_shifted() {
+        let tone: Vec<f32> = (0..SAMPLE_RATE)
+            .map(|i| 0.5 * (TAU * 220.0 * i as f32 / SAMPLE_RATE as f32).sin())
+            .collect();
+        let (output, _) = run_bytes(&float_wav(spec_float(1), &tone), wet()).unwrap();
+        let output: Vec<f32> = WavReader::new(output.as_slice())
+            .unwrap()
+            .samples::<f32>()
+            .map(Result::unwrap)
+            .collect();
+
+        // Detect the output's pitch with a dry chain.
+        let mut chain = Chain::new(SAMPLE_RATE as f32);
+        let settings = Settings {
+            gain: 1.0,
+            mix: 0.0,
+            shift: 0,
+        };
+        let edge = 0.15;
+        let duration = output.len() as f64 / f64::from(SAMPLE_RATE);
+        let mut f0s: Vec<f32> = output
+            .iter()
+            .filter_map(|&s| chain.process_frame(&mut [s], settings))
+            .filter(|d| {
+                let time = d.window_centre as f64 / f64::from(SAMPLE_RATE);
+                d.voiced && time >= edge && time <= duration - edge
+            })
+            .map(|d| d.f0_hz)
+            .collect();
+        assert!(!f0s.is_empty(), "no voiced hops in the output");
+        f0s.sort_by(f32::total_cmp);
+        let median = f0s[f0s.len() / 2];
+        let expected = 220.0 * shift::ratio(4.0);
+        let cents = 1200.0 * (median / expected).log2();
+        assert!(
+            cents.abs() <= 10.0,
+            "median {median:.2} Hz, expected {expected:.2} Hz ({cents:+.1}¢)"
+        );
+    }
+
     fn args(list: &[&str]) -> Option<Args> {
         parse_args(list.iter().map(|s| s.to_string()))
     }
@@ -450,16 +587,34 @@ mod tests {
             Some(Args {
                 input: PathBuf::from("in/voice.wav"),
                 output: PathBuf::from("target/analyse/voice.wav"),
-                gain_db: 0.0,
+                options: Options::default(),
             })
         );
+    }
+
+    #[test]
+    fn defaults_match_the_plugin() {
+        let options = args(&["a.wav"]).unwrap().options;
+        assert_eq!(options.shift, 4);
+        assert_eq!(options.mix_percent, 50.0);
+        assert_eq!(options.gain_db, 0.0);
+    }
+
+    #[test]
+    fn shift_and_mix_flags_parse() {
+        let parsed = args(&["--shift", "-5", "a.wav", "--mix", "100"]).unwrap();
+        assert_eq!(parsed.options.shift, -5);
+        assert_eq!(parsed.options.mix_percent, 100.0);
+        let parsed = args(&["a.wav", "--shift", "+12", "--mix", "0"]).unwrap();
+        assert_eq!(parsed.options.shift, 12);
+        assert_eq!(parsed.options.mix_percent, 0.0);
     }
 
     #[test]
     fn gain_accepts_negative_values_anywhere() {
         let parsed = args(&["--gain-db", "-6", "a.wav", "b.wav"]).unwrap();
         assert_eq!(parsed.output, PathBuf::from("b.wav"));
-        assert_eq!(parsed.gain_db, -6.0);
+        assert_eq!(parsed.options.gain_db, -6.0);
     }
 
     #[test]
@@ -470,6 +625,14 @@ mod tests {
             &["a.wav", "--gain-db"],
             &["a.wav", "--gain-db", "loud"],
             &["a.wav", "--verbose"],
+            &["a.wav", "--shift", "13"],
+            &["a.wav", "--shift", "-13"],
+            &["a.wav", "--shift", "2.5"],
+            &["a.wav", "--shift"],
+            &["a.wav", "--mix", "101"],
+            &["a.wav", "--mix", "-1"],
+            &["a.wav", "--mix", "NaN"],
+            &["a.wav", "--mix"],
         ] {
             assert_eq!(args(bad), None, "{bad:?}");
         }
