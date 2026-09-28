@@ -1,4 +1,5 @@
-//! The plugin window: a Gain slider, a gain readout and the detected note.
+//! The plugin window: Gain, Shift and Mix sliders, the gain readout and the
+//! detected note.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -13,7 +14,7 @@ use corral_dsp::{gain, note};
 use crate::CorralParams;
 
 /// Fixed and not saved with the set.
-const WINDOW_SIZE: LogicalSize<f32> = LogicalSize::new(300.0, 170.0);
+const WINDOW_SIZE: LogicalSize<f32> = LogicalSize::new(300.0, 240.0);
 
 pub(crate) fn default_state() -> Arc<EguiEditorState> {
     EguiEditorState::from_size(WINDOW_SIZE, 1.0)
@@ -71,6 +72,8 @@ impl NiceEguiApp for CorralEditor {
             // Goes through the host's parameter setter, so edits are recorded as automation.
             ui.add(widgets::ParamSlider::for_param(&self.params.gain, &setter));
             ui.label(format!("Gain: {readout} dB"));
+            ui.add(widgets::ParamSlider::for_param(&self.params.shift, &setter));
+            ui.add(widgets::ParamSlider::for_param(&self.params.mix, &setter));
             ui.label(egui::RichText::new(note).size(28.0).monospace());
         });
     }

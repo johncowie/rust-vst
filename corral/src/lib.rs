@@ -7,7 +7,7 @@ use nice_plug_egui::{
 };
 
 use corral_dsp::chain::{Chain, Settings};
-use corral_dsp::{gain, note};
+use corral_dsp::{gain, note, shift};
 
 use crate::editor::CorralEditor;
 
@@ -15,7 +15,8 @@ mod editor;
 
 const MAX_GAIN_DB: f32 = 12.0;
 
-/// Stereo gain and pitch detection. The −60 dB floor is treated as silence ("-inf").
+/// Stereo gain, pitch detection and a TD-PSOLA harmony. The −60 dB gain floor
+/// is treated as silence ("-inf").
 pub struct Corral {
     params: Arc<CorralParams>,
     editor_state: Arc<EguiEditorState>,
@@ -41,6 +42,12 @@ struct CorralParams {
     /// Linear gain. The ID is stored in saved sets and automation, so it must never change.
     #[id = "gain"]
     gain: FloatParam,
+    /// Whole semitones for the shifted voice. Chain ramps changes itself. ID must never change.
+    #[id = "shift"]
+    shift: IntParam,
+    /// Dry/wet, 0.0–1.0, shown as a percentage. ID must never change.
+    #[id = "mix"]
+    mix: FloatParam,
 }
 
 impl Default for Corral {
@@ -83,6 +90,22 @@ impl Default for CorralParams {
             .with_unit(" dB")
             .with_value_to_string(Arc::new(gain::format_gain))
             .with_string_to_value(formatters::s2v_f32_gain_to_db()),
+            shift: IntParam::new(
+                "Shift",
+                shift::DEFAULT,
+                IntRange::Linear {
+                    min: shift::MIN,
+                    max: shift::MAX,
+                },
+            )
+            .with_unit(" st")
+            .with_value_to_string(Arc::new(shift::format_shift))
+            .with_string_to_value(Arc::new(shift::parse_shift)),
+            mix: FloatParam::new("Mix", 0.5, FloatRange::Linear { min: 0.0, max: 1.0 })
+                .with_smoother(SmoothingStyle::Linear(20.0))
+                .with_unit("%")
+                .with_value_to_string(formatters::v2s_f32_percentage(0))
+                .with_string_to_value(formatters::s2v_f32_percentage()),
         }
     }
 }
@@ -123,10 +146,12 @@ impl Plugin for Corral {
         &mut self,
         _audio_io_layout: &AudioIOLayout,
         buffer_config: &BufferConfig,
-        _context: &mut impl ActivateContext<Self>,
+        context: &mut impl ActivateContext<Self>,
     ) -> bool {
-        // Allocates the detector's buffers and FFT plans, off the audio thread.
+        // Allocates the detector's and shifter's buffers, off the audio thread.
         self.chain = Chain::new(buffer_config.sample_rate);
+        // Fixed per sample rate: in VST3 a change restarts audio in Live.
+        context.set_latency_samples(self.chain.latency() as u32);
         true
     }
 
@@ -146,21 +171,18 @@ impl Plugin for Corral {
         for mut channel_samples in buffer.iter_samples() {
             // One smoothed value per frame, shared by both channels.
             let gain = self.params.gain.smoothed.next();
+            let settings = Settings {
+                gain,
+                mix: self.params.mix.smoothed.next(),
+                shift: self.params.shift.value(),
+            };
 
             // Stereo in and out is the only layout, so the frame always has two channels.
             let mut frame = [0.0; 2];
             for (value, sample) in frame.iter_mut().zip(channel_samples.iter_mut()) {
                 *value = *sample;
             }
-            if let Some(detection) = self.chain.process_frame(
-                &mut frame,
-                // Phase 6 adds the Shift and Mix parameters.
-                Settings {
-                    gain,
-                    mix: 0.0,
-                    shift: 0,
-                },
-            ) {
+            if let Some(detection) = self.chain.process_frame(&mut frame, settings) {
                 last_detection = Some(detection);
             }
             for (sample, value) in channel_samples.iter_mut().zip(frame) {

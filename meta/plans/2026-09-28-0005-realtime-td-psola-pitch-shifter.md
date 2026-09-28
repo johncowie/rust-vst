@@ -1046,13 +1046,13 @@ true
 
 #### Automated Verification:
 
-- [ ] `mise run check` passes.
-- [ ] `mise run build` bundles VST3 and CLAP.
-- [ ] `mise run build-universal` succeeds (the x86_64 slice for Live 10).
+- [x] `mise run check` passes.
+- [x] `mise run build` bundles VST3 and CLAP.
+- [x] `mise run build-universal` succeeds (the x86_64 slice for Live 10).
 
 #### Manual Verification:
 
-- [ ] Covered in Phase 7.
+- [x] Covered in Phase 7.
 
 ---
 
