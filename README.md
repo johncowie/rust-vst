@@ -51,7 +51,7 @@ Run a task with `mise run <task>`, or `mise run` on its own to pick one.
 | `lint` | Run clippy on all targets, treating warnings as errors |
 | `test` | Run the workspace unit tests |
 | `check` | Run fmt-check, lint, then test (the CI entry point) |
-| `analyse` | Run the plugin's DSP chain on a WAV: analyse <in.wav> [out.wav] [--gain-db <dB>] (writes out.wav and out.csv; paths are relative to the project root) |
+| `analyse` | Run the plugin's DSP chain on a WAV: analyse <in.wav> [out.wav] [--gain-db <dB>] [--shift <semitones>] [--mix <percent>] (writes out.wav and out.csv; paths are relative to the project root) |
 | `fixtures` | Download the pitch datasets into .datasets/ (~2.2 GB, once) and regenerate the committed test fixtures |
 
 Bundles land in `target/bundled/Corral.vst3` and `target/bundled/Corral.clap`.
@@ -85,8 +85,8 @@ Notes:
 ## Pitch detection
 
 Corral shows the note it hears (e.g. `D4 +12¢`, or `—` when nothing is
-voiced) under the Gain readout. Audio passes through with only the gain
-applied.
+voiced) under the Gain readout. Audio passes through with the gain applied
+and a pitch-shifted harmony mixed in (see [Pitch shifting](#pitch-shifting)).
 
 - **Algorithm:** YIN, with its difference function computed through FFT
   (`realfft`). The FFT plans and buffers are made when the host activates the
@@ -149,15 +149,23 @@ cargo test -p corral-dsp --test fixtures --test synthetic -- --nocapture
 ### Offline harness
 
 ```sh
-mise run analyse corral-dsp/tests/fixtures/vocadito_7_vibrato.wav target/analyse/v.wav --gain-db -6
+mise run analyse corral-dsp/tests/fixtures/vocadito_7_vibrato.wav target/analyse/v.wav --shift 4 --mix 100
 ```
 
-This runs the same chain the plugin runs. It writes the processed audio (in
-the input's format) and a per-hop CSV, `time_s,f0_hz,confidence,voiced`, next
-to it (`target/analyse/v.csv`). The output path is optional; it defaults to
-`target/analyse/<input name>.wav`. Input can be 16- or 24-bit integer or
-32-bit float WAV, mono or stereo. At 0 dB the output is bit-identical to the
-input.
+This runs the same chain the plugin runs, shifter included. It writes the
+processed audio (in the input's format) and a per-hop CSV,
+`time_s,f0_hz,confidence,voiced`, next to it (`target/analyse/v.csv`). The
+output path is optional; it defaults to `target/analyse/<input name>.wav`.
+Input can be 16- or 24-bit integer or 32-bit float WAV, mono or stereo.
+
+- `--gain-db <dB>`: gain, default 0.
+- `--shift <semitones>`: a whole number from −12 to 12, default +4.
+- `--mix <percent>`: 0 to 100, default 50.
+
+The defaults match the plugin's. The harness compensates the chain's
+latency: it feeds that many zeros after the input and drops that many from
+the start of the output. So the output lines up with the input and has the
+same length. At `--mix 0` and 0 dB it is bit-identical to the input.
 
 ### Test fixtures
 
@@ -167,6 +175,89 @@ MDB-stem-synth and NSynth. See
 licences and citations. `mise run fixtures` regenerates them: it downloads
 the datasets into the gitignored `.datasets/` (about 2.2 GB, once) and cuts
 the excerpts. `mise run check` only needs the committed excerpts.
+
+## Pitch shifting
+
+Corral adds a pitch-shifted copy of the input, as an interim fixed-interval
+harmoniser. The algorithm is TD-PSOLA, driven by the detector's period. See
+[`docs/td-psola.md`](docs/td-psola.md) for how it works, how it compares
+with a phase vocoder, and its known artefacts.
+
+- **`Shift`:** whole semitones, −12 to +12, default +4. A change glides
+  over 50 ms, so moving or automating it doesn't click.
+- **`Mix`:** 0–100 %, default 50 %. A linear crossfade between the dry
+  signal and the harmony, smoothed over 20 ms.
+- **Stereo:** the harmony is made from the mono sum (the signal the
+  detector hears) and added equally to both channels. The dry path stays
+  stereo.
+- **Unvoiced input** (silence, breaths, most consonants) passes dry. The
+  harmony fades in and out over 10 ms, 2 hops after the voicing changes.
+  After a note's onset it starts fading in 11–23 ms later at the output.
+- **Old Live sets:** a set saved before Shift and Mix existed loads them at
+  their defaults, so it will now play a +4 harmony at 50 %.
+
+### Latency
+
+| Sample rate | Latency (samples) | Latency (ms) |
+|---|---|---|
+| 44.1 kHz | 1103 | 25.0 |
+| 48 kHz | 1200 | 25.0 |
+
+The latency is ⌈2 · sr / 80⌉, two periods of the lowest detectable pitch.
+The whole signal, dry path included, is delayed by it, so dry and shifted
+stay aligned. It is reported to the host when the plugin is activated and
+doesn't change with `Shift`, `Mix` or the pitch sung (in VST3 a change
+restarts audio in Live). Cross-correlating the input with the output
+measures exactly 1103 / 1200 samples at Mix 0 %, and 1105 / 1202 at
+Mix 100 %. Re-measure with
+`cargo test -p corral-dsp --test latency -- --nocapture`.
+
+### Accuracy
+
+The tests run the chain's output back through the detector and compare it
+with the input pitch × 2^(shift/12). All figures are at 44.1 and 48 kHz,
+Mix 100 %, ignoring 150 ms at each end of a signal and 50 ms around each
+step of the scale.
+
+- **+4 on tones and the scale** (A3, E2, C4 and the C3–C5 scale): median
+  error within ±0.3 ¢, and 100 % of voiced frames within ±25 ¢. Thresholds:
+  ±10 ¢ and 95 %.
+- **Other shifts** (A3 at −12, −5, +7 and +12, and C4 at −12): median error
+  within ±0.6 ¢, and 100 % within ±25 ¢. Threshold: ±15 ¢.
+- **Level** (output RMS against input RMS): −0.94 dB on A3 and −0.88 dB on
+  the scale at +4 (threshold ±1.5 dB). The other shifts are printed, not
+  asserted: −3.5 dB at −12, −1.8 dB at −5, −3.1 dB at +7 and −6.3 dB at
+  +12. The level falls because TD-PSOLA keeps the spectral envelope while
+  moving the harmonics under it (see the design doc).
+- **Clicks:** the largest sample-to-sample jump must stay below 1.5 × the
+  shift ratio × the dry signal's own largest jump. For voicing bursts, a
+  level ramp through the gate, and a Mix sweep, it equals the dry signal's
+  (0.0748 / 0.0687; thresholds 0.141 / 0.130). For a Shift sweep from −12
+  to +12 it is 0.105 / 0.069, against thresholds of 0.224 / 0.206.
+- **Fixtures at +4.** The share of voiced reference frames within ±25 ¢ of
+  the reference × 2^(4/12), then the same share counting only frames the
+  chain voiced, then the detector's own ±25 ¢ score on the unshifted input:
+
+  | Fixture | Shifted | Chain-voiced only | Detector alone | Threshold |
+  |---|---|---|---|---|
+  | `vocadito_35_low` | 0.718 | 0.750 | 0.833 | 0.70 |
+  | `vocadito_7_vibrato` | 0.812 | 0.852 | 0.851 | 0.80 |
+  | `mdb_nightowl_08_male` | 0.851 | 0.875 | 0.915 | 0.84 |
+
+  Work item 0005 asked for 0.90. That is above what the detector itself
+  scores at ±25 ¢, so the shifter can't reach it alone. Each threshold is
+  set just below the measured score, as agreed in planning.
+
+Every other threshold is the work item's. The click threshold was
+calibrated from the dry signal, as the work item asked. The edge
+exclusions are longer than the work item's 50 ms, because the detector
+needs 46 ms to fill its window before the gate can open.
+
+Print the scores with:
+
+```sh
+cargo test -p corral-dsp --test shifter --test latency --test fixtures -- --nocapture
+```
 
 ## Licensing
 

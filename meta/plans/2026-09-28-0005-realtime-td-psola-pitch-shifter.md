@@ -1159,10 +1159,16 @@ Tick the Phase 4 items once the Live checks below pass:
 
 #### Automated Verification:
 
-- [ ] `docs/td-psola.md` exists and contains a comparison table and at
+- [x] `docs/td-psola.md` exists and contains a comparison table and at
       least three cited sources: `grep -c '^- ' docs/td-psola.md` under
       "Sources" is ≥ 3.
-- [ ] `mise run check` passes.
+- [x] `mise run check` passes.
+
+Note: the onset delay was measured rather than estimated. On synthesised
+tones at 82–440 Hz, the wet voice starts fading in 11–23 ms after the
+note's onset at the output, not the "about 60 ms" guessed above, because
+the 25 ms latency hides part of the detector's delay. The ROADMAP ticks
+wait for the Live checks below.
 
 #### Manual Verification (Live 10 under Rosetta, after `mise run install` with Live closed):
 
