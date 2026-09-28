@@ -1,6 +1,6 @@
 //! Frequency → nearest MIDI note and cents offset (A4 = 440 Hz), and display.
 
-const NAMES: [&str; 12] = [
+pub(crate) const NAMES: [&str; 12] = [
     "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B",
 ];
 
@@ -28,11 +28,22 @@ pub fn nearest_note(f0_hz: f32) -> Option<Note> {
     })
 }
 
-/// e.g. "A4 +0¢", "D4 +12¢", "C#3 -7¢". MIDI 60 is C4.
+/// The fractional MIDI note of a frequency: 69.0 at 440 Hz, 69.5 a
+/// quarter tone above.
+pub fn midi_from_hz(f0_hz: f32) -> f32 {
+    (69.0 + 12.0 * (f64::from(f0_hz) / 440.0).log2()) as f32
+}
+
+/// e.g. "D4", "C#3". MIDI 60 is C4.
+pub fn format_name(midi: i32) -> String {
+    let name = NAMES[midi.rem_euclid(12) as usize];
+    let octave = midi.div_euclid(12) - 1;
+    format!("{name}{octave}")
+}
+
+/// e.g. "A4 +0¢", "D4 +12¢", "C#3 -7¢".
 pub fn format_note(note: Note) -> String {
-    let name = NAMES[note.midi.rem_euclid(12) as usize];
-    let octave = note.midi.div_euclid(12) - 1;
-    format!("{name}{octave} {:+}¢", note.cents)
+    format!("{} {:+}¢", format_name(note.midi), note.cents)
 }
 
 /// Packed "no note", for the audio → editor atomic.
@@ -51,6 +62,25 @@ pub fn unpack(bits: u32) -> Option<Note> {
     (bits != UNVOICED).then(|| Note {
         midi: i32::from((bits >> 16) as u16 as i16),
         cents: (bits & 0xFFFF) as i32 - 50,
+    })
+}
+
+/// Packs two notes (the stable note and the harmony note) into one `u32`
+/// as two `i16`s, or `UNVOICED` for none. The pair (−1, −1) would collide
+/// with `UNVOICED`, but MIDI notes are never negative here.
+pub fn pack_pair(pair: Option<(i32, i32)>) -> u32 {
+    match pair {
+        None => UNVOICED,
+        Some((a, b)) => (u32::from(a as i16 as u16) << 16) | u32::from(b as i16 as u16),
+    }
+}
+
+pub fn unpack_pair(bits: u32) -> Option<(i32, i32)> {
+    (bits != UNVOICED).then(|| {
+        (
+            i32::from((bits >> 16) as u16 as i16),
+            i32::from(bits as u16 as i16),
+        )
     })
 }
 
@@ -152,5 +182,46 @@ mod tests {
     fn unvoiced_packs_to_the_sentinel() {
         assert_eq!(pack(None), UNVOICED);
         assert_eq!(unpack(UNVOICED), None);
+    }
+
+    #[test]
+    fn formats_names_on_octave_boundaries_and_sharps() {
+        assert_eq!(format_name(59), "B3");
+        assert_eq!(format_name(60), "C4");
+        assert_eq!(format_name(61), "C#4");
+        assert_eq!(format_name(71), "B4");
+        assert_eq!(format_name(72), "C5");
+        assert_eq!(format_name(0), "C-1");
+        assert_eq!(format_name(-1), "B-2");
+    }
+
+    #[test]
+    fn midi_from_hz_is_exact_on_equal_tempered_notes() {
+        assert_eq!(midi_from_hz(440.0), 69.0);
+        assert_eq!(midi_from_hz(880.0), 81.0);
+        for midi in 24..=107 {
+            let got = midi_from_hz(freq(midi, 0.0));
+            // Only the f32 rounding of the frequency: ≪ 0.01¢.
+            assert!((got - midi as f32).abs() < 1e-4, "MIDI {midi}: {got}");
+            let quarter = midi_from_hz(freq(midi, 50.0));
+            assert!(
+                (quarter - (midi as f32 + 0.5)).abs() < 1e-4,
+                "MIDI {midi}: {quarter}"
+            );
+        }
+    }
+
+    #[test]
+    fn pack_pair_round_trips_across_the_harmony_range() {
+        // E2 (40) up to B5 + 12 (95).
+        for a in 40..=95 {
+            for b in 40..=95 {
+                let packed = pack_pair(Some((a, b)));
+                assert_ne!(packed, UNVOICED);
+                assert_eq!(unpack_pair(packed), Some((a, b)));
+            }
+        }
+        assert_eq!(pack_pair(None), UNVOICED);
+        assert_eq!(unpack_pair(UNVOICED), None);
     }
 }
