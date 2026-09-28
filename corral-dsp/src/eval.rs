@@ -81,6 +81,55 @@ pub fn score(reference: &[RefFrame], estimates: &[EstFrame], max_gap_s: f64) -> 
     }
 }
 
+/// How closely a shifted output tracks the reference pitch times a ratio.
+#[derive(Clone, Copy, Debug)]
+pub struct CentsStats {
+    /// Median signed error over voiced reference frames with an estimate (f0 > 0).
+    pub median_cents: Option<f64>,
+    /// Share of *all* voiced reference frames within `tolerance_cents`
+    /// (a missing or zero estimate is a miss).
+    pub share_within: Option<f64>,
+    pub voiced_frames: usize,
+}
+
+/// Compares estimates with reference × `ratio`. Estimate times are taken
+/// as-is: callers subtract the chain latency first. `estimates` must be
+/// sorted by time.
+pub fn cents_stats(
+    reference: &[RefFrame],
+    estimates: &[EstFrame],
+    max_gap_s: f64,
+    ratio: f64,
+    tolerance_cents: f64,
+) -> CentsStats {
+    let mut errors = Vec::new();
+    let mut voiced_frames = 0;
+    let mut hits = 0;
+    for frame in reference.iter().filter(|f| f.f0_hz > 0.0) {
+        voiced_frames += 1;
+        let estimate = nearest(estimates, frame.time_s, max_gap_s).unwrap_or(MISSING);
+        if estimate.f0_hz > 0.0 {
+            let expected = f64::from(frame.f0_hz) * ratio;
+            let error = 1200.0 * (f64::from(estimate.f0_hz) / expected).log2();
+            if error.abs() <= tolerance_cents {
+                hits += 1;
+            }
+            errors.push(error);
+        }
+    }
+    errors.sort_by(f64::total_cmp);
+    let median_cents = match errors.len() {
+        0 => None,
+        len if len % 2 == 1 => Some(errors[len / 2]),
+        len => Some((errors[len / 2 - 1] + errors[len / 2]) / 2.0),
+    };
+    CentsStats {
+        median_cents,
+        share_within: (voiced_frames > 0).then(|| hits as f64 / voiced_frames as f64),
+        voiced_frames,
+    }
+}
+
 /// The estimate nearest `time_s`, if one is within `max_gap_s`.
 fn nearest(estimates: &[EstFrame], time_s: f64, max_gap_s: f64) -> Option<EstFrame> {
     let after = estimates.partition_point(|e| e.time_s < time_s);
@@ -248,6 +297,76 @@ mod tests {
         assert_eq!(s.raw_pitch_accuracy, Some(0.5));
         assert_eq!(s.voicing_recall, Some(0.5));
         assert_eq!(s.voicing_false_alarm, Some(0.0));
+    }
+
+    #[test]
+    fn cents_stats_of_a_perfect_shifted_estimate() {
+        let r = reference(&MIXED);
+        let ratio = 2f64.powf(4.0 / 12.0);
+        let e = estimates(&r, |f| (f64::from(f) * ratio) as f32, |f| f > 0.0);
+        let s = cents_stats(&r, &e, HOP, ratio, 25.0);
+        assert!(s.median_cents.unwrap().abs() < 1e-3);
+        assert_eq!(s.share_within, Some(1.0));
+        assert_eq!(s.voiced_frames, 4);
+    }
+
+    #[test]
+    fn cents_stats_of_a_constant_offset() {
+        let r = reference(&[220.0, 330.0, 440.0]);
+        let s = cents_stats(
+            &r,
+            &estimates(&r, |f| cents(f, 20.0), |_| true),
+            HOP,
+            1.0,
+            10.0,
+        );
+        assert!((s.median_cents.unwrap() - 20.0).abs() < 1e-3);
+        assert_eq!(s.share_within, Some(0.0));
+    }
+
+    #[test]
+    fn cents_stats_counts_missing_estimates_as_misses_but_not_in_the_median() {
+        let r = reference(&[220.0, 220.0, 220.0, 220.0]);
+        // Only the first two frames have an estimate within the gap.
+        let e = [
+            EstFrame {
+                time_s: 0.0,
+                f0_hz: cents(220.0, 5.0),
+                voiced: true,
+            },
+            EstFrame {
+                time_s: HOP,
+                f0_hz: cents(220.0, 5.0),
+                voiced: true,
+            },
+        ];
+        let s = cents_stats(&r, &e, HOP / 2.0, 1.0, 25.0);
+        assert!((s.median_cents.unwrap() - 5.0).abs() < 1e-3);
+        assert_eq!(s.share_within, Some(0.5));
+
+        // A zero estimate is a miss too.
+        let e = estimates(&r, |_| 0.0, |_| false);
+        let s = cents_stats(&r, &e, HOP, 1.0, 25.0);
+        assert_eq!(s.median_cents, None);
+        assert_eq!(s.share_within, Some(0.0));
+    }
+
+    #[test]
+    fn cents_stats_ignores_unvoiced_reference_frames() {
+        let r = reference(&MIXED);
+        // Wildly wrong wherever the reference is unvoiced.
+        let e = estimates(&r, |f| if f > 0.0 { f } else { 1000.0 }, |_| true);
+        let s = cents_stats(&r, &e, HOP, 1.0, 25.0);
+        assert_eq!(s.share_within, Some(1.0));
+        assert_eq!(s.voiced_frames, 4);
+    }
+
+    #[test]
+    fn cents_stats_of_nothing_is_none() {
+        let s = cents_stats(&[], &[], HOP, 1.0, 25.0);
+        assert_eq!(s.median_cents, None);
+        assert_eq!(s.share_within, None);
+        assert_eq!(s.voiced_frames, 0);
     }
 
     #[test]

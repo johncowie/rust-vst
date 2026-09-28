@@ -2,7 +2,10 @@
 
 mod common;
 
-use common::{harmonic_tone, midi_to_hz, print_scores, track, white_noise};
+use common::{
+    from_scale_step, harmonic_tone, midi_to_hz, print_scores, scale, scale_freq_at, scale_seconds,
+    track, white_noise,
+};
 use corral_dsp::chain::Chain;
 use corral_dsp::eval::{self, RefFrame, Scores};
 
@@ -65,21 +68,14 @@ fn assert_tone(name: &str, seconds: f64, harmonics: usize, freq_at: impl Fn(f64)
 
 #[test]
 fn c_major_scale() {
-    // C3 → C5, 15 notes.
-    const STEPS: [f64; 15] = [
-        48.0, 50.0, 52.0, 53.0, 55.0, 57.0, 59.0, 60.0, 62.0, 64.0, 65.0, 67.0, 69.0, 71.0, 72.0,
-    ];
-    const NOTE_S: f64 = 0.4;
     /// Frames this close to a step hear both notes, so they're left out.
     const STEP_EXCLUSION_S: f64 = 0.03;
-    let seconds = NOTE_S * STEPS.len() as f64;
-    let freq_at = |t: f64| midi_to_hz(STEPS[((t / NOTE_S) as usize).min(STEPS.len() - 1)]);
+    let seconds = scale_seconds();
 
     for sample_rate in SAMPLE_RATES {
-        let signal = harmonic_tone(sample_rate, seconds, freq_at, 12, 0.5);
+        let signal = scale(sample_rate);
         let reference = reference(seconds, |t| {
-            let from_step = t - (t / NOTE_S).round() * NOTE_S;
-            (from_step.abs() > STEP_EXCLUSION_S).then(|| freq_at(t))
+            (from_scale_step(t) > STEP_EXCLUSION_S).then(|| scale_freq_at(t))
         });
         let scores = score(&signal, sample_rate, &reference);
         assert_tracks(&format!("scale {sample_rate} Hz"), &scores);

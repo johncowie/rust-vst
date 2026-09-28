@@ -7,7 +7,7 @@ use std::f64::consts::TAU;
 use std::path::Path;
 
 use corral_dsp::chain::{Chain, Settings};
-use corral_dsp::eval::{EstFrame, Scores};
+use corral_dsp::eval::{CentsStats, EstFrame, Scores};
 use corral_dsp::pitch::Detection;
 
 /// A tone whose fundamental follows `freq_at(t)`, with harmonics at
@@ -60,6 +60,33 @@ pub fn midi_to_hz(midi: f64) -> f64 {
     440.0 * 2f64.powf((midi - 69.0) / 12.0)
 }
 
+/// The C3 → C5 major scale (MIDI notes), 15 steps.
+pub const SCALE_STEPS: [f64; 15] = [
+    48.0, 50.0, 52.0, 53.0, 55.0, 57.0, 59.0, 60.0, 62.0, 64.0, 65.0, 67.0, 69.0, 71.0, 72.0,
+];
+/// How long each scale note lasts.
+pub const SCALE_NOTE_S: f64 = 0.4;
+
+/// The scale's length in seconds.
+pub fn scale_seconds() -> f64 {
+    SCALE_NOTE_S * SCALE_STEPS.len() as f64
+}
+
+/// The scale's fundamental at time `t`.
+pub fn scale_freq_at(t: f64) -> f64 {
+    midi_to_hz(SCALE_STEPS[((t / SCALE_NOTE_S) as usize).min(SCALE_STEPS.len() - 1)])
+}
+
+/// The scale as a 12-harmonic tone at peak 0.5.
+pub fn scale(sample_rate: f32) -> Vec<f32> {
+    harmonic_tone(sample_rate, scale_seconds(), scale_freq_at, 12, 0.5)
+}
+
+/// How far `t` is from the nearest scale step (including the start and end).
+pub fn from_scale_step(t: f64) -> f64 {
+    (t - (t / SCALE_NOTE_S).round() * SCALE_NOTE_S).abs()
+}
+
 /// Unity gain, dry only: the output is the input delayed by the latency.
 pub const DRY: Settings = Settings {
     gain: 1.0,
@@ -102,6 +129,51 @@ pub fn process(
         })
         .collect();
     (output, detections)
+}
+
+/// Pitch estimates of a chain's output, with each time moved back by the
+/// chain's latency so it lines up with the input.
+pub fn output_estimates(output: &[f32], sample_rate: f32, latency: usize) -> Vec<EstFrame> {
+    let shift_s = latency as f64 / f64::from(sample_rate);
+    track(output, sample_rate)
+        .into_iter()
+        .map(|e| EstFrame {
+            time_s: e.time_s - shift_s,
+            ..e
+        })
+        .collect()
+}
+
+/// Prints one line of shifted-pitch stats in a fixed format, e.g.
+/// `A3 +4 44100 Hz  median +3.2¢  within 0.987  (voiced 380)`.
+pub fn print_cents(name: &str, stats: &CentsStats) {
+    let median = stats
+        .median_cents
+        .map_or_else(|| String::from("n/a"), |m| format!("{m:+.1}¢"));
+    let within = stats
+        .share_within
+        .map_or_else(|| String::from("  n/a"), |s| format!("{s:.3}"));
+    println!(
+        "{name:<28} median {median}  within {within}  (voiced {})",
+        stats.voiced_frames
+    );
+}
+
+/// Root mean square.
+pub fn rms(signal: &[f32]) -> f64 {
+    if signal.is_empty() {
+        return 0.0;
+    }
+    let power: f64 = signal.iter().map(|&x| f64::from(x).powi(2)).sum();
+    (power / signal.len() as f64).sqrt()
+}
+
+/// The largest |x[i] − x[i−1]|.
+pub fn max_jump(signal: &[f32]) -> f32 {
+    signal
+        .windows(2)
+        .map(|w| (w[1] - w[0]).abs())
+        .fold(0.0, f32::max)
 }
 
 /// Prints one line of scores in a fixed format, e.g.

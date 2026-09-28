@@ -112,7 +112,8 @@ Decisions made with the developer during planning:
 - **Shifter:** TD-PSOLA with:
   - analysis marks on signal peaks, tracked at previous mark + P ± P/4;
   - Hann grains of 2P centred on analysis marks;
-  - synthesis marks spaced P / ratio;
+  - synthesis marks spaced P / ratio (P here being the local mark spacing;
+    see Phase 4 results);
   - overlap-add normalised by the window sum (floored at 1).
   P comes from a period smoother that rejects octave jumps unless they
   persist for 3 hops. `Shift` changes glide over 50 ms.
@@ -845,20 +846,60 @@ just below the measurement and flag it in the Phase 7 README section.
 
 #### Automated Verification:
 
-- [ ] `cargo test -p corral-dsp eval` passes (new `cents_stats` tests).
-- [ ] `cargo test -p corral-dsp --test shifter -- --nocapture` passes and
+- [x] `cargo test -p corral-dsp eval` passes (new `cents_stats` tests).
+- [x] `cargo test -p corral-dsp --test shifter -- --nocapture` passes and
       prints pitch, level and click numbers at both sample rates.
-- [ ] `cargo test -p corral-dsp --test latency -- --nocapture` passes and
+- [x] `cargo test -p corral-dsp --test latency -- --nocapture` passes and
       prints the measured lag within ±1 hop of 1103 / 1200.
-- [ ] `cargo test -p corral-dsp --test fixtures -- --nocapture` passes and
+- [x] `cargo test -p corral-dsp --test fixtures -- --nocapture` passes and
       prints headline and diagnostic shares for all three shifted fixtures.
-- [ ] `cargo test -p corral-dsp --test no_alloc` passes.
-- [ ] `mise run check` passes.
+- [x] `cargo test -p corral-dsp --test no_alloc` passes.
+- [x] `mise run check` passes.
 
 #### Manual Verification:
 
-- [ ] Every threshold that differs from the work item has a comment with
+- [x] Every threshold that differs from the work item has a comment with
       the measured value and the reason.
+
+#### Phase 4 results (for Phase 7's README)
+
+**Deviation from Phase 3's design:** synthesis marks are spaced by the
+*local analysis-mark spacing* around each grain's source mark (÷ ratio), and
+each grain's half-length is that spacing, rather than the detector's period
+P. The detector's period now only steers mark tracking. Spacing by P made
+the output pitch inherit the detector's per-hop error and drift out of step
+with the marks. The fixtures at +4 scored 0.36 / 0.52 / 0.63 that way, and
+0.72 / 0.81 / 0.85 after the change. The plan's constants are unchanged.
+A sweep of `SMOOTHING` (0.5, 1.0) and `MARK_SEARCH` (0.15, 0.25, 0.35)
+moved the fixture scores by ≤ 0.02, which is noise, so the planned values
+stay.
+
+Measured (44.1 / 48 kHz):
+
+- Ratio-1 SNR (psola unit test): 71.2 / 66.1 dB at 110 Hz, 55.7 / 60.4 at
+  220 Hz, 52.7 / 57.4 at 440 Hz.
+- +4 on A3, E2, C4 and the scale: |median| ≤ 0.3¢, share within ±25¢
+  1.000.
+- Other shifts (A3 at −12, −5, +7, +12; C4 at −12): |median| ≤ 0.6¢, share
+  1.000.
+- Level at +4: −0.94 dB (A3), −0.88 dB (scale). Not asserted: −12
+  −3.5 dB, −5 −1.8 dB, +7 −3.0 dB, +12 −6.3 dB. This is inherent to
+  TD-PSOLA: the output samples the input's spectral envelope at the new
+  harmonics, and for a 1/k tone, harmonics 2, 4, 6 and 8 carry 0.233 of the
+  power (−6.3 dB) at +12.
+- Clicks: the max jump equals the dry signal's own (0.0748 / 0.0687) for
+  the bursts, the level ramp and the mix sweep. The shift sweep's is
+  0.105 / 0.069, against thresholds of 0.224 / 0.206.
+- Reported vs measured delay: mix 0 exactly 1103 / 1200. Mix 1 measured
+  1105 / 1202.
+- Fixtures at +4, headline (chain-voiced diagnostic) against the
+  detector's own ±25¢ score on the unshifted input:
+  - `vocadito_35_low`: 0.718 (0.750), detector 0.833. Threshold 0.70.
+  - `vocadito_7_vibrato`: 0.812 (0.852), detector 0.851. Threshold 0.80.
+  - `mdb_nightowl_08_male`: 0.851 (0.875), detector 0.915. Threshold 0.84.
+  The 0.90 target is above what the detector itself scores at ±25¢, so it
+  can't be met by the shifter alone. The thresholds were lowered as
+  decided in planning.
 
 ---
 
