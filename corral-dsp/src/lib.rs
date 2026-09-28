@@ -6,5 +6,8 @@ pub mod delay;
 pub mod eval;
 pub mod gain;
 pub mod note;
+pub mod period;
 pub mod pitch;
 pub mod psola;
+pub mod shift;
+pub mod wet_gate;

@@ -495,8 +495,9 @@ impl WetGate {
     /// True while any shifted signal is audible (open or still fading out).
     pub fn is_active(&self) -> bool;
     /// Advances the fade by one sample. Returns (dry_gain, shifted_gain),
-    /// with cos/sin of position · π/2.
-    pub fn next(&mut self) -> (f32, f32);
+    /// with cos/sin of position · π/2. (Named `next_gains`, not `next`, so
+    /// clippy doesn't mistake it for `Iterator::next`.)
+    pub fn next_gains(&mut self) -> (f32, f32);
 }
 ```
 
@@ -505,7 +506,7 @@ Unit tests:
 - one unvoiced hop doesn't close it, two do;
 - the fade takes `CROSSFADE_S · sr` samples ± 1;
 - dry² + shifted² = 1 within 1e-6 throughout;
-- at rest closed, `next()` returns exactly `(1.0, 0.0)` and `is_active()` is
+- at rest closed, `next_gains()` returns exactly `(1.0, 0.0)` and `is_active()` is
   false;
 - alternating voiced/unvoiced hops never open it.
 
@@ -515,12 +516,12 @@ Add `pub mod period; pub mod shift; pub mod wet_gate;` to `lib.rs`.
 
 #### Automated Verification:
 
-- [ ] `cargo test -p corral-dsp period shift wet_gate` passes.
-- [ ] `mise run check` passes.
+- [x] `cargo test -p corral-dsp period shift wet_gate` passes.
+- [x] `mise run check` passes.
 
 #### Manual Verification:
 
-- [ ] None.
+- [x] None.
 
 ---
 
@@ -649,7 +650,7 @@ self.psola.push(mono, period.unwrap_or(0.0));
 self.delay.process(frame); // delayed dry
 if self.psola.is_running() {
     let shifted = self.psola.next(period.expect("running implies a period"), shift::ratio(semitones));
-    let (dry_gain, shifted_gain) = self.gate.next();
+    let (dry_gain, shifted_gain) = self.gate.next_gains();
     if settings.mix != 0.0 {
         for dry in frame.iter_mut() {
             let wet = dry_gain * *dry + shifted_gain * shifted;
@@ -657,7 +658,7 @@ if self.psola.is_running() {
         }
     }
 } else {
-    self.gate.next(); // keep the fade clock in step; returns (1, 0) at rest
+    self.gate.next_gains(); // keep the fade clock in step; returns (1, 0) at rest
 }
 for sample in frame.iter_mut() {
     *sample = gain::apply_gain(*sample, settings.gain);
