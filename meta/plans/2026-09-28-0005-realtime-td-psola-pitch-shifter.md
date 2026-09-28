@@ -674,11 +674,11 @@ any voiced hop, so `start` always has a period. `psola.push` ignores
 
 #### Automated Verification:
 
-- [ ] `cargo test -p corral-dsp psola` passes and prints the ratio-1 SNR.
-- [ ] `cargo test -p corral-dsp --test shifter` (the Phase 1 identity test)
+- [x] `cargo test -p corral-dsp psola` passes and prints the ratio-1 SNR.
+- [x] `cargo test -p corral-dsp --test shifter` (the Phase 1 identity test)
       still passes, bit for bit.
-- [ ] `cargo test -p corral-dsp --test no_alloc` passes.
-- [ ] `mise run check` passes.
+- [x] `cargo test -p corral-dsp --test no_alloc` passes.
+- [x] `mise run check` passes.
 
 #### Manual Verification:
 
