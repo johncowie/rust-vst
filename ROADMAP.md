@@ -49,24 +49,26 @@ The goal is to prove that audio flows through our code and that we can change it
 
 ## Phase 4: Pitch shifting
 
-- [ ] Implement a pitch shifter that shifts by a fixed amount (start with +4 semitones)
+- [x] Implement a pitch shifter that shifts by a fixed amount (start with +4 semitones)
   - Option A: **TD-PSOLA**, which uses the detected pitch period, suits monophonic voice, and keeps formants
   - Option B: **phase vocoder**, which is more general but can sound "phasey" and moves formants
-- [ ] Mix the shifted signal with the dry signal
-- [ ] Dry/wet mix parameter (the harmoniser will need it)
-- [ ] Report plugin latency to the host so Ableton can compensate for the delay
-- [ ] Listening tests in Ableton: artefacts, transients, low notes
-- [ ] Make the shift amount a parameter (semitones) as an interim "fixed harmoniser"
+- [x] Mix the shifted signal with the dry signal
+- [x] Dry/wet mix parameter (the harmoniser will need it)
+- [x] Report plugin latency to the host so Ableton can compensate for the delay
+- [x] Listening tests in Ableton: artefacts, transients, low notes
+- [x] Make the shift amount a parameter (semitones) as an interim "fixed harmoniser" (replaced by Key, Scale and Glide in Phase 5)
 
 ## Phase 5: Key-aware harmony (the auto-harmoniser)
 
-- [ ] `Key` parameter (C to B) and `Scale` parameter (major, then natural minor, then others)
-- [ ] Map the detected note to a scale degree
-- [ ] Compute the **diatonic third above** within the scale (C→E major 3rd, D→F minor 3rd, E→G minor 3rd, etc.)
-- [ ] Choose how to handle out-of-key input notes: snap to the nearest scale note, or use a fixed fallback interval
-- [ ] Hysteresis / note stabilisation so the harmony doesn't flicker between intervals on vibrato or scoops
-- [ ] Glide between harmony notes rather than jumping instantly
-- [ ] Unit tests for the key/scale/interval logic (pure functions, easy to test exhaustively)
+- [x] `Key` parameter (C to B) and `Scale` parameter (major, then natural minor, then others)
+  - Major and natural minor only (0006); other scales stay open for Phase 6
+- [x] Map the detected note to a scale degree
+- [x] Compute the **diatonic third above** within the scale (C→E major 3rd, D→F minor 3rd, E→G minor 3rd, etc.)
+- [x] Choose how to handle out-of-key input notes: snap to the nearest scale note, or use a fixed fallback interval
+  - Decision (0006): an out-of-key note uses the interval of the scale note a semitone below (C#→F in C major); the harmony never mutes
+- [x] Hysteresis / note stabilisation so the harmony doesn't flicker between intervals on vibrato or scoops
+- [x] Glide between harmony notes rather than jumping instantly
+- [x] Unit tests for the key/scale/interval logic (pure functions, easy to test exhaustively)
 - [ ] End-to-end test in Ableton: sing a scale in C and hear correct diatonic thirds
 
 ## Phase 6: Refinement and extras

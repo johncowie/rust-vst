@@ -1061,11 +1061,11 @@ to the README's Harmony section.
 
 #### Automated Verification:
 
-- [ ] `mise run check` passes
+- [x] `mise run check` passes
 
 #### Manual Verification:
 
-- [ ] The README's figures match the latest `--nocapture` output
+- [x] The README's figures match the latest `--nocapture` output
 - [ ] The Phase 5 end-to-end item is ticked only after the Live check in
       Phase 6
 

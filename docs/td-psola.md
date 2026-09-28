@@ -85,9 +85,13 @@ causal.
   signal and the shifted one over 10 ms with equal power (cos/sin). While
   it is fully closed, or `Mix` is 0 %, the chain skips the mix arithmetic,
   so the output is the delayed input bit for bit.
-- **Shift ramp** (`shift.rs`). A change of `Shift` glides linearly in
-  semitones over 50 ms, whatever its size. This is to avoid clicks, not a
-  musical glide.
+- **Glide** (`shift.rs`). The shift in semitones follows the interval
+  chosen for the stabiliser's note (`stabiliser.rs`) through a one-pole
+  filter in semitones, with `Glide` as its time constant. At voicing
+  onset it jumps straight to the interval. It has no minimum ramp: a step
+  in the ratio only moves where the next grain is placed, so even an
+  instant change doesn't click. See the README's
+  [Harmony](../README.md#harmony) section.
 - **Stereo.** The detector and shifter work on the mono sum. The shifted
   voice is added equally to both channels, and the dry path stays stereo.
 
@@ -96,7 +100,7 @@ causal.
 The chain's latency is fixed at L = ⌈2 · sr / 80⌉ samples: two periods of
 the lowest detectable pitch (80 Hz). That is 1103 samples at 44.1 kHz,
 1200 at 48 kHz and 2400 at 96 kHz, 25 ms in each case. It doesn't depend on
-pitch, `Shift` or `Mix`, because in VST3 a change of latency restarts audio
+pitch, `Key`, `Scale`, `Glide` or `Mix`, because in VST3 a change of latency restarts audio
 in Live.
 
 - With input time n, the output sample being made is o = n − L.
