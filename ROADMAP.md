@@ -38,14 +38,14 @@ The goal is to prove that audio flows through our code and that we can change it
 
 ## Phase 3: Pitch detection
 
-- [ ] Offline test harness: run the plugin's DSP on a `.wav` file and write the result to a `.wav` (using `hound`), so DSP can be tested without a DAW
-- [ ] Collect some test audio: a sung scale, a held note, vibrato, and a monophonic instrument line
-- [ ] Implement a monophonic pitch detector. Start with YIN, and consider pYIN or McLeod (MPM) if YIN proves noisy
-- [ ] Voicing / confidence gate so that silence, breaths, and noise don't produce a pitch
-- [ ] Convert frequency to MIDI note number plus cents offset
-- [ ] Show the detected note in the GUI (e.g. "D4 +12¢") and confirm it tracks your voice in Ableton
-- [ ] Test the detector against the test audio (accuracy, octave errors)
-- [ ] Measure the detection latency and tune the window size (trade latency against low-note accuracy)
+- [x] Offline test harness: run the plugin's DSP on a `.wav` file and write the result to a `.wav` (using `hound`), so DSP can be tested without a DAW
+- [x] Collect some test audio: a sung scale, a held note, vibrato, and a monophonic instrument line
+- [x] Implement a monophonic pitch detector. Start with YIN, and consider pYIN or McLeod (MPM) if YIN proves noisy
+- [x] Voicing / confidence gate so that silence, breaths, and noise don't produce a pitch
+- [x] Convert frequency to MIDI note number plus cents offset
+- [x] Show the detected note in the GUI (e.g. "D4 +12¢") and confirm it tracks your voice in Ableton
+- [x] Test the detector against the test audio (accuracy, octave errors)
+- [x] Measure the detection latency and tune the window size (trade latency against low-note accuracy)
 
 ## Phase 4: Pitch shifting
 
@@ -79,3 +79,7 @@ The goal is to prove that audio flows through our code and that we can change it
 - [ ] Presets
 - [ ] Performance pass: profile CPU use and remove allocations from the audio thread
 - [ ] Universal binary (arm64 + x86_64) and a CLAP build for other DAWs (delivered in Phase 0 via `mise run build-universal`)
+
+## Icebox
+
+- [ ] Report to nice-plug: debug builds abort in Ableton Live 10 before `process()` runs. Live's VST3 channel-pointer array (`channelBuffers32`) isn't 8-byte aligned, so the debug-only alignment check in `BufferManager::create_buffers` panics (`panic_misaligned_pointer_dereference`). Fix: read the host's pointers with `read_unaligned`. Until then, `mise run install-debug` can't be used in Live 10

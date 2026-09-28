@@ -45,6 +45,9 @@ echo "Installed $dest/Corral.vst3"
 description = "Build the universal VST3, ad-hoc sign it, and install it to ~/Library/Audio/Plug-Ins/VST3 (quit Ableton Live first)"
 run = [{ task = "require-live-closed" }, { task = "build-universal" }, { task = "copy-bundle" }]
 
+# Doesn't work in Ableton Live 10 yet: nice-plug's debug-only alignment check
+# fails on Live's channel pointers and aborts before process() runs (see the
+# ROADMAP icebox).
 [tasks.install-debug]
 description = "Build a debug universal VST3 with nice-plug's allocation assertions (aborts Live if process() allocates), sign it and install it (quit Ableton Live first)"
 run = [

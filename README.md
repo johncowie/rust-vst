@@ -45,11 +45,14 @@ Run a task with `mise run <task>`, or `mise run` on its own to pick one.
 | `build` | Bundle corral as VST3 and CLAP for the host architecture (release) |
 | `build-universal` | Bundle corral as universal (arm64 + x86_64) macOS VST3 and CLAP (release) |
 | `install` | Build the universal VST3, ad-hoc sign it, and install it to ~/Library/Audio/Plug-Ins/VST3 (quit Ableton Live first) |
+| `install-debug` | Build a debug universal VST3 with nice-plug's allocation assertions (aborts Live if process() allocates), sign it and install it (quit Ableton Live first) |
 | `fmt` | Format all workspace code |
 | `fmt-check` | Check formatting without changing files |
 | `lint` | Run clippy on all targets, treating warnings as errors |
 | `test` | Run the workspace unit tests |
 | `check` | Run fmt-check, lint, then test (the CI entry point) |
+| `analyse` | Run the plugin's DSP chain on a WAV: analyse <in.wav> [out.wav] [--gain-db <dB>] (writes out.wav and out.csv; paths are relative to the project root) |
+| `fixtures` | Download the pitch datasets into .datasets/ (~2.2 GB, once) and regenerate the committed test fixtures |
 
 Bundles land in `target/bundled/Corral.vst3` and `target/bundled/Corral.clap`.
 `build-universal` writes to the same paths, overwriting them with universal
@@ -72,6 +75,98 @@ Notes:
 - If the plugin's name or parameters change, Option-click Rescan in the
   Plug-ins preferences. This clears Live's plugin database and does a clean
   scan.
+- `mise run install-debug` builds a version that aborts Live if `process()`
+  allocates. It can't be used in Live 10 yet: in debug builds nice-plug checks
+  pointer alignment, and Live's channel pointers fail that check, so Live
+  aborts before Corral's `process()` runs. The `no_alloc` test in `corral-dsp`
+  checks the detector chain instead. See the Icebox in
+  [`ROADMAP.md`](ROADMAP.md).
+
+## Pitch detection
+
+Corral shows the note it hears (e.g. `D4 +12¢`, or `—` when nothing is
+voiced) under the Gain readout. Audio passes through with only the gain
+applied.
+
+- **Algorithm:** YIN, with its difference function computed through FFT
+  (`realfft`). The FFT plans and buffers are made when the host activates the
+  plugin, so the audio thread never allocates.
+- **Input:** a mono sum of the stereo input, taken *before* the gain, so the
+  Gain slider doesn't affect detection.
+- **Range:** 80 Hz–1 kHz (E2 to about B5).
+- **Voicing gate:** a hop is voiced when the window RMS is at least −50 dBFS
+  (`LEVEL_GATE_DBFS`) and the confidence (1 − YIN's normalised difference at
+  the chosen lag) is at least 0.8 (`MIN_CONFIDENCE`). YIN's threshold
+  (`YIN_THRESHOLD`) is 0.10. All three are constants in
+  `corral-dsp/src/pitch.rs`.
+
+### Window, hop and latency
+
+| Sample rate | Window | Hop | Latency A3 | Latency E2 |
+|---|---|---|---|---|
+| 44.1 kHz | 2048 (46.4 ms) | 256 (5.8 ms) | 34.1 ms | 39.9 ms |
+| 48 kHz | 2048 (42.7 ms) | 256 (5.3 ms) | 33.3 ms | 38.7 ms |
+
+Latency is the time from a synthesised note's onset to the first of 5
+consecutive correct detections (within 50 cents). The host's buffer adds to
+these figures. Above 48 kHz, the window and hop double for each further
+multiple of 48 kHz. Re-measure with
+`cargo test -p corral-dsp --test latency -- --nocapture`.
+
+### Accuracy
+
+`mise run check` scores the detector on synthesised signals and on seven
+excerpts from public datasets, and fails below the thresholds from work item
+0004. The scores are:
+
+- **RPA:** raw pitch accuracy, the share of voiced reference frames within
+  50 cents;
+- **RCA:** raw chroma accuracy, the same ignoring octave (RCA − RPA stands in
+  for the octave-error rate);
+- **VR:** voicing recall;
+- **VFA:** voicing false alarm.
+
+| Fixture | RPA | RCA | VR | VFA |
+|---|---|---|---|---|
+| `vocadito_7_vibrato` | 0.930 | 0.933 | 0.950 | 0.156 |
+| `vocadito_35_low` | 0.959 | 0.959 | 0.951 | 0.081 |
+| `mdb_nightowl_08_male` | 0.968 | 0.974 | 0.971 | 0.000 |
+| `mdb_pachelbel_02_low` | 0.983 | 0.983 | 0.992 | n/a |
+| `nsynth_e2` | 1.000 | 1.000 | 1.000 | n/a |
+| `nsynth_c4` | 1.000 | 1.000 | 1.000 | n/a |
+| `nsynth_g5` | 1.000 | 1.000 | 1.000 | n/a |
+
+The synthesised C major scale (C3–C5), A3 with ±50-cent vibrato, E2 and B5
+all score 1.000 on every metric at both 44.1 and 48 kHz. Silence and white
+noise are unvoiced on every hop.
+
+Print the scores with:
+
+```sh
+cargo test -p corral-dsp --test fixtures --test synthetic -- --nocapture
+```
+
+### Offline harness
+
+```sh
+mise run analyse corral-dsp/tests/fixtures/vocadito_7_vibrato.wav target/analyse/v.wav --gain-db -6
+```
+
+This runs the same chain the plugin runs. It writes the processed audio (in
+the input's format) and a per-hop CSV, `time_s,f0_hz,confidence,voiced`, next
+to it (`target/analyse/v.csv`). The output path is optional; it defaults to
+`target/analyse/<input name>.wav`. Input can be 16- or 24-bit integer or
+32-bit float WAV, mono or stereo. At 0 dB the output is bit-identical to the
+input.
+
+### Test fixtures
+
+The excerpts in `corral-dsp/tests/fixtures/` come from Vocadito,
+MDB-stem-synth and NSynth. See
+[`ATTRIBUTION.md`](corral-dsp/tests/fixtures/ATTRIBUTION.md) for sources,
+licences and citations. `mise run fixtures` regenerates them: it downloads
+the datasets into the gitignored `.datasets/` (about 2.2 GB, once) and cuts
+the excerpts. `mise run check` only needs the committed excerpts.
 
 ## Licensing
 
@@ -80,4 +175,7 @@ Notes:
   which is MIT OR Apache-2.0.
 - So, unlike upstream nih-plug (whose `vst3-sys` bindings are GPLv3), there is
   no GPLv3 constraint on distributing the plugin.
+- The test fixtures include CC BY-NC material (MDB-stem-synth). That is fine
+  only while the project isn't sold; otherwise those fixtures must be
+  replaced.
 - The project is for personal use for now.

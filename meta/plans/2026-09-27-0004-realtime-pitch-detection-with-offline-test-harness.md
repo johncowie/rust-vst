@@ -1337,45 +1337,58 @@ Phase 3 items.
 
 #### Automated Verification:
 
-- [ ] `mise run check` exits 0
-- [ ] `grep -c '| `analyse` |\|| `fixtures` |\|| `install-debug` |' README.md`
+- [x] `mise run check` exits 0
+- [x] `grep -c '| `analyse` |\|| `fixtures` |\|| `install-debug` |' README.md`
       prints 3
-- [ ] `grep -n 'Latency' README.md` matches, and the table has no `…`
+- [x] `grep -n 'Latency' README.md` matches, and the table has no `…`
       placeholders left
-- [ ] With Live closed, `mise run install-debug` and then `mise run install`
+- [x] With Live closed, `mise run install-debug` and then `mise run install`
       both exit 0
-- [ ] `sed -n '/## Phase 3/,/## Phase 4/p' ROADMAP.md | grep -c '\[x\]'`
+- [x] `sed -n '/## Phase 3/,/## Phase 4/p' ROADMAP.md | grep -c '\[x\]'`
       prints 8
 
 #### Manual Verification:
 
 With the **debug** build from `mise run install-debug`:
 
-- [ ] Option-click Rescan, put Corral on an audio track, and sing and play
+- [ ] ~~Option-click Rescan, put Corral on an audio track, and sing and play
       into it for a minute. Open and close the window, move the Gain slider,
-      and stop and start transport.
-- [ ] Live doesn't crash or abort. That shows `process()` never allocated
-      with the detector running.
+      and stop and start transport.~~ Blocked, see below.
+- [ ] ~~Live doesn't crash or abort. That shows `process()` never allocated
+      with the detector running.~~ Blocked, see below.
+
+> **Blocked (2026-09-28):** the debug build aborts Live 10 on the first
+> `process()` call, before Corral's own code runs. The crash report shows
+> `panic_misaligned_pointer_dereference` in nice-plug's
+> `BufferManager::create_buffers`, which reads the host's `channelBuffers32`
+> array. That array isn't 8-byte aligned, and debug builds check alignment.
+> The panic message then allocates, and the allocation guard aborts. It isn't
+> an allocation in Corral: any debug build crashes the same way, and release
+> builds (no alignment check; misaligned reads are fine on x86_64) run
+> normally. nice-plug 0.4.2 is the latest release. The developer chose to
+> accept this for now. The `no_alloc` test covers the detector chain, and
+> `process()` was checked by reading it in Phase 6. Reporting it to nice-plug
+> is in the ROADMAP icebox.
 
 Then with the **release** build from `mise run install`:
 
-- [ ] The window shows the heading, the Gain slider, the `Gain: 0.00 dB`
+- [x] The window shows the heading, the Gain slider, the `Gain: 0.00 dB`
       readout and `—` when there's no input.
-- [ ] Sing a held A3 into a mic on the track (monitoring on). The editor
+- [x] Sing a held A3 into a mic on the track (monitoring on). The editor
       shows `A3`, with cents within ±20 of a reference tuner (e.g. Live's
       Tuner device on the same track).
-- [ ] Stop singing. The display goes to `—` within about 100 ms.
-- [ ] Sing a scale. The note follows each step, without octave jumps on
+- [x] Stop singing. The display goes to `—` within about 100 ms.
+- [x] Sing a scale. The note follows each step, without octave jumps on
       sustained notes.
-- [ ] Set Gain to −inf. The audio is silent, but the note still tracks,
+- [x] Set Gain to −inf. The audio is silent, but the note still tracks,
       because detection happens before the gain.
-- [ ] No regression from 0003:
+- [x] No regression from 0003:
   - the slider, the readout and automation still work;
   - a set saved with a non-default Gain restores it;
   - opening and closing the window, and deleting the device with its window
     open, doesn't crash;
   - the audio at 0 dB is unchanged.
-- [ ] Check at 44.1 kHz and at 48 kHz (Preferences → Audio → Sample Rate).
+- [x] Check at 44.1 kHz and at 48 kHz (Preferences → Audio → Sample Rate).
       The note tracks correctly at both.
 
 ---

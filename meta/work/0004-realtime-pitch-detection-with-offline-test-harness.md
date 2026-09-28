@@ -173,6 +173,10 @@ test audio that 0003 moved here.
 - [ ] Given a debug build with nice-plug's allocation assertions enabled
       (e.g. the `assert_process_allocs` feature), when the plugin processes
       audio with the detector running, then nothing panics.
+      **Blocked in Live 10 (2026-09-28):** debug builds abort in nice-plug's
+      wrapper before `process()` runs, because Live's channel-pointer array
+      is misaligned (see the plan's Phase 7 note and the ROADMAP icebox).
+      The per-hop path is checked instead by `corral-dsp/tests/no_alloc.rs`.
 - [ ] Given `mise run analyse <vocadito excerpt>.wav out.wav`, then a CSV
       with one row per hop and an output WAV are written. At 0 dB gain, the
       output WAV is bit-identical to the input.
