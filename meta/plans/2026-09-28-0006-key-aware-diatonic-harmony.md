@@ -891,15 +891,23 @@ usage.
 
 #### Automated Verification:
 
-- [ ] Harness tests pass: `cargo test -p analyse`
-- [ ] `mise run analyse corral-dsp/tests/fixtures/vocadito_7_vibrato.wav target/analyse/v.wav --key C --scale major --glide 50 --mix 100`
+- [x] Harness tests pass: `cargo test -p analyse`
+- [x] `mise run analyse corral-dsp/tests/fixtures/vocadito_7_vibrato.wav target/analyse/v.wav --key C --scale major --glide 50 --mix 100`
       writes `v.wav` and `v.csv` with the three new columns
-- [ ] `mise run check` passes
+- [x] `mise run check` passes
 
 #### Manual Verification:
 
 - [ ] Scanning `v.csv`: the stable note holds through the vibrato while
       `f0_hz` swings
+
+#### Implementation notes (Phase 5)
+
+- `shift::MIN`/`MAX`/`DEFAULT`/`format_shift`/`parse_shift` stay until
+  Phase 6: the plugin's `Shift` is now their only caller.
+- The `--shift` and `--mix` parse test is split into
+  `key_scale_and_glide_flags_parse` and `mix_flag_parses`. `--scale` with
+  no value is also rejected.
 
 ---
 

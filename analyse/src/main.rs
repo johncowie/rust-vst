@@ -10,25 +10,30 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use corral_dsp::chain::{Chain, Settings};
-use corral_dsp::harmony::IntervalSource;
-use corral_dsp::shift;
+use corral_dsp::harmony::{self, IntervalSource, Scale};
+use corral_dsp::{note, shift};
 use hound::{SampleFormat, WavReader, WavSpec, WavWriter};
 
-const USAGE: &str =
-    "usage: analyse <in.wav> [out.wav] [--gain-db <dB>] [--shift <semitones>] [--mix <percent>]";
+const USAGE: &str = "usage: analyse <in.wav> [out.wav] [--gain-db <dB>] [--key <C..B>] \
+     [--scale <major|minor>] [--glide <ms>] [--mix <percent>]";
 
 /// Where output goes when no `out.wav` is given.
 const DEFAULT_OUTPUT_DIR: &str = "target/analyse";
 
-/// Matches the plugin's Mix default.
+/// Match the plugin's Glide and Mix defaults.
+const DEFAULT_GLIDE_MS: f32 = 1000.0 * shift::DEFAULT_GLIDE_S;
+const MAX_GLIDE_MS: f32 = 1000.0 * shift::MAX_GLIDE_S;
 const DEFAULT_MIX_PERCENT: f32 = 50.0;
 
 /// The processing controls, as given on the command line.
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct Options {
     gain_db: f32,
-    /// Whole semitones, `shift::MIN..=shift::MAX`.
-    shift: i32,
+    /// Pitch class, 0 = C … 11 = B.
+    key: u8,
+    scale: Scale,
+    /// 0.0–250.0.
+    glide_ms: f32,
     /// 0.0–100.0.
     mix_percent: f32,
 }
@@ -37,7 +42,9 @@ impl Default for Options {
     fn default() -> Self {
         Self {
             gain_db: 0.0,
-            shift: shift::DEFAULT,
+            key: 0,
+            scale: Scale::Major,
+            glide_ms: DEFAULT_GLIDE_MS,
             mix_percent: DEFAULT_MIX_PERCENT,
         }
     }
@@ -65,7 +72,15 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Option<Args> {
                     .ok()
                     .filter(|db: &f32| db.is_finite())?;
             }
-            "--shift" => options.shift = shift::parse_shift(&args.next()?)?,
+            "--key" => options.key = harmony::parse_key(&args.next()?)?,
+            "--scale" => options.scale = harmony::parse_scale(&args.next()?)?,
+            "--glide" => {
+                options.glide_ms = args
+                    .next()?
+                    .parse()
+                    .ok()
+                    .filter(|ms| (0.0..=MAX_GLIDE_MS).contains(ms))?;
+            }
             "--mix" => {
                 options.mix_percent = args
                     .next()?
@@ -169,17 +184,21 @@ fn run<R: Read, W: Write + Seek, C: Write>(
 
     let mut writer = WavWriter::new(output, spec)?;
     let mut csv = BufWriter::new(csv);
-    writeln!(csv, "time_s,f0_hz,confidence,voiced")?;
+    writeln!(
+        csv,
+        "time_s,f0_hz,confidence,voiced,stable_note,interval,harmony_note"
+    )?;
 
     let settings = Settings {
         // Exactly 1.0 at 0 dB.
         gain: 10f32.powf(options.gain_db / 20.0),
         // Exactly 0.0 and 1.0 at 0 % and 100 %.
         mix: options.mix_percent / 100.0,
-        // --shift stays a fixed interval until --key/--scale/--glide replace
-        // it (plan 0006, Phase 5).
-        interval: IntervalSource::Fixed(options.shift),
-        glide_s: shift::DEFAULT_GLIDE_S,
+        interval: IntervalSource::Diatonic {
+            key: options.key,
+            scale: options.scale,
+        },
+        glide_s: options.glide_ms / 1000.0,
     };
     let sample_rate = f64::from(spec.sample_rate);
     let mut chain = Chain::new(spec.sample_rate as f32);
@@ -208,9 +227,19 @@ fn run<R: Read, W: Write + Seek, C: Write>(
         if let Some(detection) = detection.filter(|_| index < frames) {
             summary.hops += 1;
             summary.voiced_hops += usize::from(detection.voiced);
+            // The harmony is kept through unvoiced hops; blank it there.
+            let harmony = match chain.harmony().filter(|_| detection.voiced) {
+                Some(h) => format!(
+                    "{},{:+},{}",
+                    note::format_name(h.note),
+                    h.interval,
+                    note::format_name(h.note + h.interval)
+                ),
+                None => ",,".to_string(),
+            };
             writeln!(
                 csv,
-                "{:.6},{:.3},{:.4},{}",
+                "{:.6},{:.3},{:.4},{},{harmony}",
                 detection.window_centre as f64 / sample_rate,
                 detection.f0_hz,
                 detection.confidence,
@@ -274,10 +303,12 @@ fn main() -> ExitCode {
                 summary.frames, summary.sample_rate, summary.channels, summary.hops
             );
             println!(
-                "latency {} samples ({:.1} ms), compensated; shift {}, mix {}%",
+                "latency {} samples ({:.1} ms), compensated; key {} {}, glide {} ms, mix {}%",
                 summary.latency,
                 1000.0 * summary.latency as f64 / f64::from(summary.sample_rate),
-                shift::format_shift(args.options.shift),
+                harmony::format_key(args.options.key),
+                harmony::format_scale(args.options.scale),
+                args.options.glide_ms,
                 args.options.mix_percent
             );
             ExitCode::SUCCESS
@@ -363,7 +394,7 @@ mod tests {
         }
     }
 
-    /// Fully shifted, at the default shift.
+    /// Fully shifted, at the default key and scale.
     fn wet() -> Options {
         Options {
             mix_percent: 100.0,
@@ -435,7 +466,10 @@ mod tests {
         let chain = Chain::new(SAMPLE_RATE as f32);
         let (window, hop) = (chain.window_len(), chain.hop_len());
         let mut lines = csv.lines();
-        assert_eq!(lines.next(), Some("time_s,f0_hz,confidence,voiced"));
+        assert_eq!(
+            lines.next(),
+            Some("time_s,f0_hz,confidence,voiced,stable_note,interval,harmony_note")
+        );
         let rows: Vec<Vec<&str>> = lines.map(|l| l.split(',').collect()).collect();
         assert_eq!(rows.len(), (frames - window) / hop + 1);
 
@@ -445,8 +479,15 @@ mod tests {
             assert!((pair[1] - pair[0] - step).abs() < 2e-6, "{pair:?}");
         }
         for row in &rows {
-            assert_eq!(row.len(), 4);
+            assert_eq!(row.len(), 7);
             assert!(row[3] == "0" || row[3] == "1", "{row:?}");
+            // A is vi in C major, so its third is C (+3).
+            let harmony = &row[4..];
+            if row[3] == "1" {
+                assert_eq!(harmony, ["A3", "+3", "C4"], "{row:?}");
+            } else {
+                assert_eq!(harmony, ["", "", ""], "{row:?}");
+            }
         }
         // The steady 220 Hz tone is voiced and tracked.
         let voiced: Vec<f32> = rows
@@ -573,7 +614,8 @@ mod tests {
         assert!(!f0s.is_empty(), "no voiced hops in the output");
         f0s.sort_by(f32::total_cmp);
         let median = f0s[f0s.len() / 2];
-        let expected = 220.0 * shift::ratio(4.0);
+        // A3 in C major: a minor third up, to C4.
+        let expected = 220.0 * shift::ratio(3.0);
         let cents = 1200.0 * (median / expected).log2();
         assert!(
             cents.abs() <= 10.0,
@@ -600,18 +642,32 @@ mod tests {
     #[test]
     fn defaults_match_the_plugin() {
         let options = args(&["a.wav"]).unwrap().options;
-        assert_eq!(options.shift, 4);
+        assert_eq!(options.key, 0);
+        assert_eq!(options.scale, Scale::Major);
+        assert_eq!(options.glide_ms, 50.0);
         assert_eq!(options.mix_percent, 50.0);
         assert_eq!(options.gain_db, 0.0);
     }
 
     #[test]
-    fn shift_and_mix_flags_parse() {
-        let parsed = args(&["--shift", "-5", "a.wav", "--mix", "100"]).unwrap();
-        assert_eq!(parsed.options.shift, -5);
+    fn key_scale_and_glide_flags_parse() {
+        let parsed = args(&["--key", "Db", "a.wav", "--scale", "minor", "--glide", "0"]).unwrap();
+        assert_eq!(parsed.options.key, 1);
+        assert_eq!(parsed.options.scale, Scale::NaturalMinor);
+        assert_eq!(parsed.options.glide_ms, 0.0);
+        let parsed = args(&["a.wav", "--key", "a#", "--scale", "natural-minor"]).unwrap();
+        assert_eq!(parsed.options.key, 10);
+        assert_eq!(parsed.options.scale, Scale::NaturalMinor);
+        let parsed = args(&["a.wav", "--scale", "major", "--glide", "250"]).unwrap();
+        assert_eq!(parsed.options.scale, Scale::Major);
+        assert_eq!(parsed.options.glide_ms, 250.0);
+    }
+
+    #[test]
+    fn mix_flag_parses() {
+        let parsed = args(&["--mix", "100", "a.wav"]).unwrap();
         assert_eq!(parsed.options.mix_percent, 100.0);
-        let parsed = args(&["a.wav", "--shift", "+12", "--mix", "0"]).unwrap();
-        assert_eq!(parsed.options.shift, 12);
+        let parsed = args(&["a.wav", "--mix", "0"]).unwrap();
         assert_eq!(parsed.options.mix_percent, 0.0);
     }
 
@@ -630,10 +686,15 @@ mod tests {
             &["a.wav", "--gain-db"],
             &["a.wav", "--gain-db", "loud"],
             &["a.wav", "--verbose"],
-            &["a.wav", "--shift", "13"],
-            &["a.wav", "--shift", "-13"],
-            &["a.wav", "--shift", "2.5"],
-            &["a.wav", "--shift"],
+            &["a.wav", "--shift", "4"],
+            &["a.wav", "--key", "H"],
+            &["a.wav", "--key"],
+            &["a.wav", "--scale", "dorian"],
+            &["a.wav", "--scale"],
+            &["a.wav", "--glide", "251"],
+            &["a.wav", "--glide", "-1"],
+            &["a.wav", "--glide", "NaN"],
+            &["a.wav", "--glide"],
             &["a.wav", "--mix", "101"],
             &["a.wav", "--mix", "-1"],
             &["a.wav", "--mix", "NaN"],

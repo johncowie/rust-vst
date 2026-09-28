@@ -5,9 +5,8 @@ pub const MAX_GLIDE_S: f32 = 0.250;
 /// Closer than this (0.01¢) and the glide lands exactly on its target.
 const SNAP_SEMITONES: f32 = 1e-4;
 
-// The Shift parameter's range and display. Only the plugin's Shift and the
-// harness's --shift still use them; they go when Key/Scale/Glide replace
-// those (plan 0006, Phases 5 and 6).
+// The Shift parameter's range and display. Only the plugin's Shift still
+// uses them; they go when Key/Scale/Glide replace it (plan 0006, Phase 6).
 pub const MIN: i32 = -12;
 pub const MAX: i32 = 12;
 pub const DEFAULT: i32 = 4;
