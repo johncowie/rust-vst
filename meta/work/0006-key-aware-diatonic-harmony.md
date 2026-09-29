@@ -5,12 +5,12 @@ title: "Key-Aware Diatonic Harmony"
 date: "2026-09-28T14:36:44+00:00"
 author: John Cowie Del Corral
 producer: create-work-item
-status: draft
+status: done
 kind: story
 priority: high
 blocked_by: ["work-item:0005"]
 tags: [phase-5, dsp, harmony, music-theory, stabilisation, glide, testing]
-last_updated: "2026-09-28T14:36:44+00:00"
+last_updated: "2026-09-29T08:01:55+00:00"
 last_updated_by: John Cowie Del Corral
 schema_version: 1
 ---
