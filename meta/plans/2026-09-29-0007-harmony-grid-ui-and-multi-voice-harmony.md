@@ -5,13 +5,13 @@ title: "Harmony Grid UI and Multi-Voice Harmony Implementation Plan"
 date: "2026-09-29T09:11:09+00:00"
 author: John Cowie Del Corral
 producer: create-plan
-status: draft
+status: done
 work_item_id: "work-item:0007"
 parent: "work-item:0007"
 tags: [phase-6, gui, dsp, harmony, multi-voice, glide, testing]
 revision: "5671e9efdcbd7f298bce20bfccb33a96f27a447f"
 repository: "rust-vst"
-last_updated: "2026-09-29T09:11:09+00:00"
+last_updated: "2026-09-29T11:52:30+00:00"
 last_updated_by: John Cowie Del Corral
 schema_version: 1
 ---
@@ -1047,7 +1047,7 @@ If an assertion misses:
 
 #### Manual Verification:
 
-- [ ] Listen to a test-written or harness WAV of row C = {−5, +4} on a
+- [x] Listen to a test-written or harness WAV of row C = {−5, +4} on a
       held C4: G3 and E4 are clear, and toggles don't tick
 - [x] Results (figures, CPU on arm64 and under Rosetta) recorded below
       for the README
@@ -1271,20 +1271,20 @@ their test, which no longer have callers.
 
 #### Manual Verification:
 
-- [ ] `mise run install`, then Option-click Rescan in Live 10 (Rosetta,
+- [x] `mise run install`, then Option-click Rescan in Live 10 (Rosetta,
       x86_64 slice). Corral opens a 960×560 window with only Glide and
       Mix controls. Every cell is labelled upright, and it matches the
       mock-up's layout
-- [ ] Row C = {−5, +4}, Mix 50%: singing a C gives G below and E above.
+- [x] Row C = {−5, +4}, Mix 50%: singing a C gives G below and E above.
       The C in the centre column lights up, and the two toggles show as
       sounding. The readout shows e.g. `C4 → G3 · E4`
-- [ ] Singing a note whose row is empty gives only the dry signal. Its
+- [x] Singing a note whose row is empty gives only the dry signal. Its
       centre cell still lights up, no toggle shows as sounding, and the
       readout shows `→ —`
-- [ ] Toggling cells while singing, and moving between programmed
+- [x] Toggling cells while singing, and moving between programmed
       notes: no audible clicks, and the latency Live reports stays at
       1103 / 1200 samples
-- [ ] Reopening the set starts with an empty grid (expected; not saved)
+- [x] Reopening the set starts with an empty grid (expected; not saved)
 
 #### Results:
 
@@ -1398,8 +1398,8 @@ clock), and why it costs little per voice.
   glide-sweep row is now 0.237 / 0.210 (was 0.240 / 0.210). The
   out-of-key test went with `harmony.rs`'s interval tables, so the README
   no longer lists it.
-- ROADMAP Phase 6: the editor and end-to-end items stay unticked until
-  the Live checks in Phase 6 of this plan are done; the rest are ticked.
+- ROADMAP Phase 6: every item is ticked, the editor and end-to-end
+  items once the Live checks in Phase 6 of this plan were done.
 
 ---
 

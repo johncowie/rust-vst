@@ -76,10 +76,10 @@ The goal is to prove that audio flows through our code and that we can change it
 - [x] A grid of toggles, one row per pitch class of the stable note and one column per interval (−12…+12), that replaces `Key` and `Scale`
 - [x] Several voices, one per "on" cell: matched by position when the note changes (they glide), with surplus and edited voices faded over 20 ms
 - [x] Remove `Gain`
-- [ ] The grid editor (960×560, cells labelled with their notes, readout `C4 → G3 · E4`)
+- [x] The grid editor (960×560, cells labelled with their notes, readout `C4 → G3 · E4`)
 - [x] Harness `--voices` and the voice columns in the CSV
 - [x] Measure the CPU cost of 24 voices (3.5 % of real time native, 5.4 % under Rosetta)
-- [ ] End-to-end test in Ableton: program a row, sing, and hear the voices without clicks
+- [x] End-to-end test in Ableton: program a row, sing, and hear the voices without clicks
 
 ## Phase 7: Refinement and extras
 
