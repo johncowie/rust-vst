@@ -288,7 +288,7 @@ exact on the equal-tempered notes; `pack_pair` round-trips over MIDI
 
 #### Manual Verification:
 
-- [ ] The hand-written reference table was typed from music theory, not
+- [x] The hand-written reference table was typed from music theory, not
       copied from the implementation's output
 
 ---
@@ -756,7 +756,7 @@ If any assertion misses:
 
 #### Manual Verification:
 
-- [ ] Listen to the scale output (`mise run analyse` in Phase 5, or a
+- [x] Listen to the scale output (`mise run analyse` in Phase 5, or a
       test-written WAV): the thirds sound right and the glides are
       smooth
 - [x] Results recorded below
@@ -898,7 +898,7 @@ usage.
 
 #### Manual Verification:
 
-- [ ] Scanning `v.csv`: the stable note holds through the vibrato while
+- [x] Scanning `v.csv`: the stable note holds through the vibrato while
       `f0_hz` swings
 
 #### Implementation notes (Phase 5)
@@ -988,16 +988,16 @@ enum ScaleParam {
 
 #### Manual Verification:
 
-- [ ] `mise run install`, then Option-click Rescan in Live 10 (Rosetta,
+- [x] `mise run install`, then Option-click Rescan in Live 10 (Rosetta,
       x86_64 slice). Corral shows Gain, Key, Scale, Glide and Mix, with
       no Shift
-- [ ] Key C, Major, Mix 50%: singing a C major scale gives a diatonic
+- [x] Key C, Major, Mix 50%: singing a C major scale gives a diatonic
       third above each note, and the readout shows e.g. "D4 → F4"
-- [ ] Held notes with vibrato: the harmony and the readout's arrow line
+- [x] Held notes with vibrato: the harmony and the readout's arrow line
       don't flicker
-- [ ] Changing Key, Scale and Glide while singing: no audible clicks,
+- [x] Changing Key, Scale and Glide while singing: no audible clicks,
       and the latency Live reports stays at 1103 / 1200 samples
-- [ ] Out-of-key notes (e.g. sing F#) still produce a harmony (A#)
+- [x] Out-of-key notes (e.g. sing F#) still produce a harmony (A#)
 
 #### Implementation notes (Phase 6)
 
@@ -1066,7 +1066,7 @@ to the README's Harmony section.
 #### Manual Verification:
 
 - [x] The README's figures match the latest `--nocapture` output
-- [ ] The Phase 5 end-to-end item is ticked only after the Live check in
+- [x] The Phase 5 end-to-end item is ticked only after the Live check in
       Phase 6
 
 ---
