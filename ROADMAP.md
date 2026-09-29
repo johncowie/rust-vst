@@ -27,8 +27,8 @@ The goal is to prove that audio flows through our code and that we can change it
 - [x] Smooth the parameter so it doesn't click (nice-plug `SmoothingStyle::Logarithmic`)
 - [x] Build the VST3 bundle and copy it to `~/Library/Audio/Plug-Ins/VST3/` (`mise run install` uses the universal build, because Live 10 runs under Rosetta and needs the x86_64 slice)
 - [x] Ad-hoc codesign the bundle so macOS / Ableton will load it (`codesign --force --deep -s - <bundle>`)
-- [ ] Rescan plugins in Ableton, put the plugin on an audio track, and check that the gain audibly changes the signal
-- [ ] Check that the parameter can be automated from Ableton
+- [x] Rescan plugins in Ableton, put the plugin on an audio track, and check that the gain audibly changes the signal
+- [x] Check that the parameter can be automated from Ableton
 - [x] Add a mise task that builds, signs, and installs in one step
 
 ## Phase 2: Development foundations
@@ -69,7 +69,7 @@ The goal is to prove that audio flows through our code and that we can change it
 - [x] Hysteresis / note stabilisation so the harmony doesn't flicker between intervals on vibrato or scoops
 - [x] Glide between harmony notes rather than jumping instantly
 - [x] Unit tests for the key/scale/interval logic (pure functions, easy to test exhaustively)
-- [ ] End-to-end test in Ableton: sing a scale in C and hear correct diatonic thirds
+- [x] End-to-end test in Ableton: sing a scale in C and hear correct diatonic thirds
 
 ## Phase 6: Refinement and extras
 
