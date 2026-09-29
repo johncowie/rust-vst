@@ -1173,14 +1173,14 @@ Tests:
 
 #### Automated Verification:
 
-- [ ] Harness tests pass: `cargo test -p analyse`
-- [ ] `mise run analyse corral-dsp/tests/fixtures/vocadito_7_vibrato.wav target/analyse/v.wav --voices C:-5,+4 D:+3 --glide 50 --mix 100`
+- [x] Harness tests pass: `cargo test -p analyse`
+- [x] `mise run analyse corral-dsp/tests/fixtures/vocadito_7_vibrato.wav target/analyse/v.wav --voices C:-5,+4 D:+3 --glide 50 --mix 100`
       writes `v.wav`, and `v.csv` with the three new columns
-- [ ] `mise run check` passes
+- [x] `mise run check` passes
 
 #### Manual Verification:
 
-- [ ] Reading `v.csv`: hops on C list `-5 +4`, hops on D list `+3`,
+- [x] Reading `v.csv`: hops on C list `-5 +4`, hops on D list `+3`,
       and other notes have empty interval columns
 
 ---

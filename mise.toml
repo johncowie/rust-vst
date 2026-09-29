@@ -73,7 +73,7 @@ description = "Run the workspace unit tests"
 run = "cargo test --workspace"
 
 [tasks.analyse]
-description = "Run the plugin's DSP chain on a WAV: analyse <in.wav> [out.wav] [--key <C..B>] [--scale <major|minor>] [--glide <ms>] [--mix <percent>] (writes out.wav and out.csv; paths are relative to the project root)"
+description = "Run the plugin's DSP chain on a WAV: analyse <in.wav> [out.wav] [--voices <row>…] [--glide <ms>] [--mix <percent>] (writes out.wav and out.csv; paths are relative to the project root)"
 run = "cargo run --release --quiet -p analyse --"
 
 [tasks.fixtures]
