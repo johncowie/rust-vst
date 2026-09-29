@@ -6,11 +6,12 @@
 use std::f64::consts::TAU;
 use std::path::Path;
 
-use corral_dsp::chain::{Chain, Harmony, Settings};
+use corral_dsp::chain::{Chain, Settings};
 use corral_dsp::eval::{CentsStats, EstFrame, Scores};
-use corral_dsp::harmony::{IntervalSource, Scale};
+use corral_dsp::grid::{Grid, PITCH_CLASSES, Row};
 use corral_dsp::pitch::Detection;
 use corral_dsp::shift::{self, DEFAULT_GLIDE_S};
+use corral_dsp::voices::VoiceState;
 
 /// A tone whose fundamental follows `freq_at(t)`, with harmonics at
 /// amplitude 1/k. Each harmonic's phase is integrated per sample, so pitch
@@ -102,35 +103,46 @@ pub fn from_scale_step(t: f64) -> f64 {
     (t - (t / SCALE_NOTE_S).round() * SCALE_NOTE_S).abs()
 }
 
-/// Unity gain, dry only: the output is the input delayed by the latency.
+/// Dry only: the output is the input delayed by the latency.
 pub const DRY: Settings = Settings {
-    gain: 1.0,
     mix: 0.0,
-    interval: IntervalSource::Fixed(0),
+    grid: Grid::EMPTY,
     glide_s: DEFAULT_GLIDE_S,
 };
 
-/// Unity gain, a fixed whole-semitone shift, the default glide.
-pub fn fixed(shift: i32, mix: f32) -> Settings {
-    Settings {
-        gain: 1.0,
-        mix,
-        interval: IntervalSource::Fixed(shift),
-        glide_s: DEFAULT_GLIDE_S,
-    }
+/// A fixed whole-semitone shift (one voice at `shift` for every note),
+/// the default glide.
+pub fn fixed(shift: i8, mix: f32) -> Settings {
+    voices(Grid::uniform(shift), DEFAULT_GLIDE_S, mix)
 }
 
-/// Unity gain, a diatonic third in `key` (0 = C … 11 = B) and `scale`.
-pub fn diatonic(key: u8, scale: Scale, glide_s: f32, mix: f32) -> Settings {
-    Settings {
-        gain: 1.0,
-        mix,
-        interval: IntervalSource::Diatonic { key, scale },
-        glide_s,
-    }
+pub fn voices(grid: Grid, glide_s: f32, mix: f32) -> Settings {
+    Settings { mix, grid, glide_s }
 }
 
-/// Runs a `Chain` over a mono signal at unity gain and returns one estimate
+/// The diatonic third above each pitch class relative to the key, typed
+/// from the degree intervals (not computed):
+/// - major: I +4, ii +3, iii +3, IV +4, V +4, vi +3, vii +3;
+/// - natural minor: i +3, ii +3, III +4, iv +3, v +3, VI +4, VII +4.
+///
+/// Each chromatic pitch class copies the scale note a semitone below.
+// C  C# D  D# E  F  F# G  G# A  A# B   (relative to the key)
+pub const MAJOR_THIRDS: [i8; 12] = [4, 4, 3, 3, 3, 4, 4, 4, 4, 3, 3, 3];
+// 1  -  2  3  -  4  -  5  6  -  7  -
+pub const NATURAL_MINOR_THIRDS: [i8; 12] = [3, 3, 3, 4, 4, 3, 3, 3, 4, 4, 4, 4];
+
+/// Row `pc` = {`table[(pc − key) mod 12]`}: a scale's thirds in `key`
+/// (0 = C … 11 = B).
+pub fn thirds_grid(key: usize, table: &[i8; 12]) -> Grid {
+    let mut grid = Grid::EMPTY;
+    for pc in 0..PITCH_CLASSES {
+        let third = table[(pc + PITCH_CLASSES - key) % PITCH_CLASSES];
+        grid.set_row(pc, Row::EMPTY.with(third, true));
+    }
+    grid
+}
+
+/// Runs a `Chain` over a mono signal, dry, and returns one estimate
 /// per hop, timed at the analysis window's centre.
 pub fn track(signal: &[f32], sample_rate: f32) -> Vec<EstFrame> {
     let mut chain = Chain::new(sample_rate);
@@ -167,24 +179,25 @@ pub fn process(
     (output, detections)
 }
 
-/// One hop of a traced run: the sample it ended on, its detection and
-/// the chain's harmony choice after it.
+/// One hop of a traced run: the sample it ended on, its detection, and
+/// after it the stable note and the row the sounding voices follow.
 #[derive(Clone, Copy, Debug)]
 pub struct Hop {
     pub sample: usize,
     pub detection: Detection,
-    pub harmony: Option<Harmony>,
+    pub note: Option<i32>,
+    pub sounding: Row,
 }
 
-/// A traced run: the output, every hop, and the glide's value per sample.
+/// A traced run: the output, every hop, and the live voices per sample.
 pub struct Trace {
     pub output: Vec<f32>,
     pub hops: Vec<Hop>,
-    pub shifts: Vec<f32>,
+    pub voices: Vec<Vec<VoiceState>>,
 }
 
-/// Like [`process`], recording `chain.harmony()` on each hop and
-/// `chain.shift_semitones()` on each sample.
+/// Like [`process`], recording the stable note and sounding row on each
+/// hop and `chain.voices()` on each sample.
 pub fn process_traced(
     signal: &[f32],
     sample_rate: f32,
@@ -192,7 +205,7 @@ pub fn process_traced(
 ) -> Trace {
     let mut chain = Chain::new(sample_rate);
     let mut hops = Vec::new();
-    let mut shifts = Vec::with_capacity(signal.len());
+    let mut voices = Vec::with_capacity(signal.len());
     let output = signal
         .iter()
         .enumerate()
@@ -202,18 +215,37 @@ pub fn process_traced(
                 hops.push(Hop {
                     sample: i,
                     detection,
-                    harmony: chain.harmony(),
+                    note: chain.stable_note(),
+                    sounding: chain.sounding(),
                 });
             }
-            shifts.push(chain.shift_semitones());
+            voices.push(chain.voices().collect());
             frame[0]
         })
         .collect();
     Trace {
         output,
         hops,
-        shifts,
+        voices,
     }
+}
+
+/// The one live voice on each sample (`None` before the first). Panics
+/// if more than one voice is ever live.
+pub fn single_voice(trace: &Trace) -> Vec<Option<VoiceState>> {
+    trace
+        .voices
+        .iter()
+        .enumerate()
+        .map(|(i, voices)| {
+            assert!(
+                voices.len() <= 1,
+                "sample {i}: {} voices live",
+                voices.len()
+            );
+            voices.first().copied()
+        })
+        .collect()
 }
 
 /// Pitch estimates of a chain's output, with each time moved back by the
@@ -269,6 +301,20 @@ pub const CLICK_MARGIN: f32 = 1.5;
 pub fn assert_no_clicks(name: &str, signal: &[f32], output: &[f32], max_semitones: f32) {
     let dry = max_jump(signal);
     let threshold = CLICK_MARGIN * shift::ratio(max_semitones) * dry;
+    check_clicks(name, dry, threshold, output);
+}
+
+/// As [`assert_no_clicks`] with several voices sounding together: each at
+/// full level can jump by its own largest jump, so the threshold is
+/// `CLICK_MARGIN · Σ ratio(interval) · max_jump(input)`. With one interval
+/// it is exactly the single-voice threshold.
+pub fn assert_no_clicks_voices(name: &str, signal: &[f32], output: &[f32], intervals: &[i8]) {
+    let dry = max_jump(signal);
+    let ratios: f32 = intervals.iter().map(|&i| shift::ratio(f32::from(i))).sum();
+    check_clicks(name, dry, CLICK_MARGIN * ratios * dry, output);
+}
+
+fn check_clicks(name: &str, dry: f32, threshold: f32, output: &[f32]) {
     let measured = max_jump(output);
     println!("clicks {name}: max jump {measured:.4}, threshold {threshold:.4} (dry {dry:.4})");
     assert!(measured <= threshold, "{name}: {measured} > {threshold}");

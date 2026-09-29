@@ -1,6 +1,6 @@
-//! Key and scale → the diatonic third above a note, and where the
-//! interval comes from.
+//! Key and scale → the diatonic third above a note.
 
+use crate::grid::{Grid, PITCH_CLASSES, Row};
 use crate::note::NAMES;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -62,27 +62,16 @@ pub fn third_above(key: u8, scale: Scale, midi: i32) -> i32 {
     }
 }
 
-/// Where the harmony interval comes from. The plugin and harness use
-/// `Diatonic`; `Fixed` keeps a whole-semitone shift for the shifter's
-/// regression tests (and Phase 6's interval choice).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum IntervalSource {
-    Diatonic { key: u8, scale: Scale },
-    Fixed(i32),
-}
-
-impl IntervalSource {
-    /// Semitones from `midi` up to the harmony note.
-    #[inline]
-    pub fn interval(self, midi: i32) -> i32 {
-        match self {
-            Self::Diatonic { key, scale } => third_above(key, scale, midi),
-            Self::Fixed(semitones) => {
-                debug_assert!((-12..=12).contains(&semitones), "{semitones}");
-                semitones
-            }
-        }
+/// The grid whose row for each pitch class is the diatonic third above
+/// it. A bridge for the plugin and harness until Phases 5 and 6 of plan
+/// 0007 replace Key and Scale.
+pub fn diatonic_grid(key: u8, scale: Scale) -> Grid {
+    let mut grid = Grid::EMPTY;
+    for pc in 0..PITCH_CLASSES {
+        let third = third_above(key, scale, pc as i32) as i8;
+        grid.set_row(pc, Row::EMPTY.with(third, true));
     }
+    grid
 }
 
 /// "C" … "B" (sharps), for the harness summary and CSV.
@@ -238,17 +227,10 @@ mod tests {
     }
 
     #[test]
-    fn fixed_ignores_the_note() {
-        for n in [-12, -5, 0, 4, 12] {
-            for midi in [40, 60, 61, 95] {
-                assert_eq!(IntervalSource::Fixed(n).interval(midi), n);
-            }
-        }
-        let c_major = IntervalSource::Diatonic {
-            key: 0,
-            scale: Scale::Major,
-        };
-        assert_eq!(c_major.interval(62), 3);
+    fn diatonic_grid_rows_hold_the_third() {
+        let grid = diatonic_grid(0, Scale::Major);
+        assert_eq!(grid.row(2).intervals().collect::<Vec<_>>(), [3]);
+        assert_eq!(grid.row(0).intervals().collect::<Vec<_>>(), [4]);
     }
 
     #[test]

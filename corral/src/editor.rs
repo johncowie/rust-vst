@@ -1,15 +1,14 @@
-//! The plugin window: Gain, Key, Scale, Glide and Mix controls, the gain
-//! readout, the harmony ("D4 → F4") and, under it, the detected note.
+//! The plugin window: Key, Scale, Glide and Mix controls, the harmony
+//! ("D4 → F4") and, under it, the detected note.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 use nice_plug::context::gui::GuiContext;
 use nice_plug::editor::dpi::LogicalSize;
-use nice_plug::prelude::*;
 use nice_plug_egui::{EguiEditorState, NiceEguiApp, widgets};
 
-use corral_dsp::{gain, note};
+use corral_dsp::note;
 
 use crate::CorralParams;
 
@@ -22,8 +21,6 @@ pub(crate) fn default_state() -> Arc<EguiEditorState> {
 
 pub struct CorralEditor {
     params: Arc<CorralParams>,
-    /// The smoothed gain the audio thread applied to its last frame.
-    readout_gain: Arc<AtomicF32>,
     /// The packed note from the last analysis hop (`note::pack`).
     note_readout: Arc<AtomicU32>,
     /// The packed (stable note, harmony note) from the last hop (`note::pack_pair`).
@@ -36,13 +33,11 @@ pub struct CorralEditor {
 impl CorralEditor {
     pub(crate) fn new(
         params: Arc<CorralParams>,
-        readout_gain: Arc<AtomicF32>,
         note_readout: Arc<AtomicU32>,
         harmony_readout: Arc<AtomicU32>,
     ) -> Self {
         Self {
             params,
-            readout_gain,
             note_readout,
             harmony_readout,
             gui_context: None,
@@ -66,7 +61,6 @@ impl NiceEguiApp for CorralEditor {
             return;
         };
         let setter = gui_context.param_setter();
-        let readout = gain::format_gain(self.readout_gain.load(Ordering::Relaxed));
         let note = note::unpack(self.note_readout.load(Ordering::Relaxed))
             .map_or_else(|| String::from("—"), note::format_note);
         let harmony = note::unpack_pair(self.harmony_readout.load(Ordering::Relaxed)).map_or_else(
@@ -84,8 +78,6 @@ impl NiceEguiApp for CorralEditor {
         egui::CentralPanel::default().show(ui, |ui| {
             ui.heading("Corral");
             // Goes through the host's parameter setter, so edits are recorded as automation.
-            ui.add(widgets::ParamSlider::for_param(&self.params.gain, &setter));
-            ui.label(format!("Gain: {readout} dB"));
             ui.add(widgets::ParamSlider::for_param(&self.params.key, &setter));
             ui.add(widgets::ParamSlider::for_param(&self.params.scale, &setter));
             ui.add(widgets::ParamSlider::for_param(&self.params.glide, &setter));

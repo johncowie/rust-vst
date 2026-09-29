@@ -7,32 +7,26 @@ use nice_plug_egui::{
 };
 
 use corral_dsp::chain::{Chain, Settings};
-use corral_dsp::harmony::{IntervalSource, Scale};
-use corral_dsp::{gain, note, shift};
+use corral_dsp::grid::Grid;
+use corral_dsp::harmony::{self, Scale};
+use corral_dsp::{note, shift};
 
 use crate::editor::CorralEditor;
 
 mod editor;
 
-const MAX_GAIN_DB: f32 = 12.0;
-
-/// Stereo gain, pitch detection and a key-aware diatonic harmony. The −60 dB
-/// gain floor is treated as silence ("-inf").
+/// Pitch detection and a grid-driven multi-voice harmony.
 pub struct Corral {
     params: Arc<CorralParams>,
     editor_state: Arc<EguiEditorState>,
     repaint_notifier: RepaintNotifier,
-    /// The smoothed gain applied to the last frame, shown by the editor's readout.
-    readout_gain: Arc<AtomicF32>,
-    /// The last value stored in `readout_gain`, so the audio thread only
-    /// stores and repaints when it changes.
-    last_readout_gain: f32,
     /// The DSP chain. Rebuilt for the host's sample rate in `activate()`.
     chain: Chain,
     /// The last hop's note, packed with `note::pack`; `note::UNVOICED` when
     /// nothing is detected. Shown by the editor.
     note_readout: Arc<AtomicU32>,
-    /// The last value stored in `note_readout`.
+    /// The last value stored in `note_readout`, so the audio thread only
+    /// stores and repaints when it changes.
     last_note_readout: u32,
     /// The last hop's (stable note, harmony note), packed with
     /// `note::pack_pair`; `note::UNVOICED` when nothing is sounding.
@@ -107,10 +101,8 @@ impl From<ScaleParam> for Scale {
 
 #[derive(Params)]
 struct CorralParams {
-    /// Linear gain. The ID is stored in saved sets and automation, so it must never change.
-    #[id = "gain"]
-    gain: FloatParam,
-    /// The harmony's key. ID must never change.
+    /// The harmony's key. The ID is stored in saved sets and automation,
+    /// so it must never change.
     #[id = "key"]
     key: EnumParam<KeyParam>,
     /// Major or natural minor. ID must never change.
@@ -128,23 +120,18 @@ struct CorralParams {
 impl Default for Corral {
     fn default() -> Self {
         let params = Arc::new(CorralParams::default());
-        let unity = util::db_to_gain(0.0);
-        let readout_gain = Arc::new(AtomicF32::new(unity));
         let note_readout = Arc::new(AtomicU32::new(note::UNVOICED));
         let harmony_readout = Arc::new(AtomicU32::new(note::UNVOICED));
 
         Self {
             initial_editor: Some(CorralEditor::new(
                 params.clone(),
-                readout_gain.clone(),
                 note_readout.clone(),
                 harmony_readout.clone(),
             )),
             params,
             editor_state: editor::default_state(),
             repaint_notifier: RepaintNotifier::new(),
-            readout_gain,
-            last_readout_gain: unity,
             // A placeholder: the host always calls `activate()`, which
             // replaces it, before `process()`.
             chain: Chain::new(48_000.0),
@@ -159,16 +146,6 @@ impl Default for Corral {
 impl Default for CorralParams {
     fn default() -> Self {
         Self {
-            gain: FloatParam::new(
-                "Gain",
-                util::db_to_gain(0.0),
-                FloatRange::gain_range(gain::MIN_GAIN_DB, MAX_GAIN_DB),
-            )
-            // Logarithmic smoothing can't reach 0.0, which is why the range stops at −60 dB.
-            .with_smoother(SmoothingStyle::Logarithmic(50.0))
-            .with_unit(" dB")
-            .with_value_to_string(Arc::new(gain::format_gain))
-            .with_string_to_value(formatters::s2v_f32_gain_to_db()),
             key: EnumParam::new("Key", KeyParam::C),
             scale: EnumParam::new("Scale", ScaleParam::Major),
             glide: FloatParam::new(
@@ -245,22 +222,20 @@ impl Plugin for Corral {
         _aux: &mut AuxiliaryBuffers,
         _context: &mut impl ProcessContext<Self>,
     ) -> ProcessStatus {
-        let mut last_gain = None;
         let mut last_detection = None;
-        // Read once per buffer: none of them is smoothed.
-        let interval = IntervalSource::Diatonic {
-            key: self.params.key.value() as u8,
-            scale: self.params.scale.value().into(),
-        };
+        // Read once per buffer: none of them is smoothed. The grid is a
+        // bridge until the grid editor replaces Key and Scale (plan 0007).
+        let grid = harmony::diatonic_grid(
+            self.params.key.value() as u8,
+            self.params.scale.value().into(),
+        );
         let glide_s = self.params.glide.value() / 1000.0;
 
         for mut channel_samples in buffer.iter_samples() {
             // One smoothed value per frame, shared by both channels.
-            let gain = self.params.gain.smoothed.next();
             let settings = Settings {
-                gain,
                 mix: self.params.mix.smoothed.next(),
-                interval,
+                grid,
                 glide_s,
             };
 
@@ -275,7 +250,6 @@ impl Plugin for Corral {
             for (sample, value) in channel_samples.iter_mut().zip(frame) {
                 *sample = value;
             }
-            last_gain = Some(gain);
         }
 
         // Share readouts with the editor once per buffer, only when they change.
@@ -283,13 +257,6 @@ impl Plugin for Corral {
         // opens. Each is a single atomic store. A buffer with no hop boundary
         // leaves the notes as they were.
         let mut changed = false;
-        if let Some(gain) = last_gain
-            && gain != self.last_readout_gain
-        {
-            self.last_readout_gain = gain;
-            self.readout_gain.store(gain, Ordering::Relaxed);
-            changed = true;
-        }
         if let Some(detection) = last_detection {
             let packed = note::pack(
                 detection
@@ -302,12 +269,12 @@ impl Plugin for Corral {
                 self.note_readout.store(packed, Ordering::Relaxed);
                 changed = true;
             }
-            // The chain keeps its choice through unvoiced hops; blank it here.
+            // The chain keeps its note through unvoiced hops; blank it here.
             let packed = note::pack_pair(
                 self.chain
-                    .harmony()
+                    .stable_note()
                     .filter(|_| detection.voiced)
-                    .map(|h| (h.note, h.note + h.interval)),
+                    .map(|n| (n, n + i32::from(single_interval(grid, n)))),
             );
             if packed != self.last_harmony_readout {
                 self.last_harmony_readout = packed;
@@ -321,6 +288,11 @@ impl Plugin for Corral {
 
         ProcessStatus::Normal
     }
+}
+
+/// The one interval a diatonic grid's row holds for `note`.
+fn single_interval(grid: Grid, note: i32) -> i8 {
+    grid.row_for(note).intervals().next().unwrap_or(0)
 }
 
 impl ClapPlugin for Corral {

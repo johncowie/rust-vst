@@ -4,9 +4,8 @@
 
 mod common;
 
-use common::{DRY, harmonic_tone, midi_to_hz, process};
+use common::{DRY, MAJOR_THIRDS, harmonic_tone, midi_to_hz, process, thirds_grid};
 use corral_dsp::chain::Chain;
-use corral_dsp::harmony::Scale;
 use corral_dsp::shift::DEFAULT_GLIDE_S;
 
 /// A detection is "stable" when it and the next few are all correct.
@@ -102,8 +101,8 @@ fn reported_latency_matches_the_measured_delay() {
             ("mix 1", common::fixed(4, 1.0)),
             ("mix 0", common::fixed(4, 0.0)),
             (
-                "key C major, mix 1",
-                common::diatonic(0, Scale::Major, DEFAULT_GLIDE_S, 1.0),
+                "C major thirds grid, mix 1",
+                common::voices(thirds_grid(0, &MAJOR_THIRDS), DEFAULT_GLIDE_S, 1.0),
             ),
         ] {
             let (output, _) = process(&signal, sample_rate, |_| settings);

@@ -1,43 +1,38 @@
 //! The processing chain shared by the plugin and the offline harness:
-//! mono sum → pitch tracker and shifter (pre-gain); each channel → a delay
-//! of the chain's fixed latency; wet gate between the delayed dry signal and
-//! the shifted one; dry/wet mix; gain last. Once per hop the note stabiliser
-//! picks the stable note, and the harmony interval comes from it; the shift
-//! glides toward that interval, and jumps to it at voicing onset.
+//! mono sum → pitch tracker and the shifter's shared analysis; each
+//! channel → a delay of the chain's fixed latency; wet gate between the
+//! delayed dry signal and the summed harmony voices; dry/wet mix. Once per
+//! hop the note stabiliser picks the stable note, and the grid's row for
+//! its pitch class says which intervals sound: one voice each, at full
+//! level. When the note changes the voices glide (matched by position) or
+//! fade (surplus); edits of the sounding row fade their own voice; at
+//! voicing onset the voices jump. See `voices`.
 
 use crate::delay::DelayLine;
-use crate::gain;
-use crate::harmony::IntervalSource;
+use crate::grid::{Grid, Row};
 use crate::note;
 use crate::period::PeriodSmoother;
 use crate::pitch::{Detection, PitchTracker};
-use crate::psola::{self, Analysis, Voice};
-use crate::shift::{self, Glide};
+use crate::psola::{self, Analysis};
+use crate::shift;
 use crate::stabiliser::{NoteStabiliser, Update};
+use crate::voices::{VoicePool, VoiceState};
 use crate::wet_gate::WetGate;
 
 /// The most channels a frame may have.
 const MAX_CHANNELS: usize = 2;
 
-/// Per-frame controls. The plugin smooths `gain` and `mix`; `Chain`
-/// glides the interval itself.
+/// Per-frame controls. The plugin smooths `mix`; `Chain` glides and
+/// fades the voices itself.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Settings {
-    /// Linear gain, applied last.
-    pub gain: f32,
     /// 0.0 = dry only, 1.0 = wet only.
     pub mix: f32,
-    pub interval: IntervalSource,
+    /// Which intervals sound for each pitch class. The plugin copies it
+    /// once per buffer.
+    pub grid: Grid,
     /// Glide time constant in seconds, 0.0..=shift::MAX_GLIDE_S.
     pub glide_s: f32,
-}
-
-/// The stable note and the interval chosen for it; the harmony note is
-/// `note + interval`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Harmony {
-    pub note: i32,
-    pub interval: i32,
 }
 
 pub struct Chain {
@@ -47,16 +42,14 @@ pub struct Chain {
     latency: usize,
     smoother: PeriodSmoother,
     stabiliser: NoteStabiliser,
-    glide: Glide,
     sample_rate: f32,
     /// The glide time the coefficient was computed for, so `exp` runs only
     /// when it changes.
     glide_s: f32,
     glide_coefficient: f32,
-    harmony: Option<Harmony>,
     gate: WetGate,
     analysis: Analysis,
-    voice: Voice,
+    voices: VoicePool,
 }
 
 impl Chain {
@@ -71,14 +64,12 @@ impl Chain {
             latency,
             smoother: PeriodSmoother::new(sample_rate),
             stabiliser: NoteStabiliser::new(sample_rate, hop_len),
-            glide: Glide::new(0.0),
             sample_rate,
             glide_s: shift::DEFAULT_GLIDE_S,
             glide_coefficient: shift::glide_coefficient(shift::DEFAULT_GLIDE_S, sample_rate),
-            harmony: None,
             gate: WetGate::new(sample_rate),
             analysis: Analysis::new(sample_rate),
-            voice: Voice::new(),
+            voices: VoicePool::new(sample_rate),
         }
     }
 
@@ -88,11 +79,9 @@ impl Chain {
         self.delay.reset();
         self.smoother.reset();
         self.stabiliser.reset();
-        self.glide.jump(0.0);
-        self.harmony = None;
         self.gate.reset();
         self.analysis.reset();
-        self.voice.stop();
+        self.voices.reset();
     }
 
     pub fn window_len(&self) -> usize {
@@ -109,28 +98,33 @@ impl Chain {
         self.latency
     }
 
-    /// The latest stable note and its interval. Kept through unvoiced
-    /// hops; callers blank it for display.
-    pub fn harmony(&self) -> Option<Harmony> {
-        self.harmony
+    /// The latest stable note. Kept through unvoiced hops; callers blank
+    /// it for display.
+    pub fn stable_note(&self) -> Option<i32> {
+        self.stabiliser.note()
     }
 
-    /// The glide's current value in semitones, for tests.
-    pub fn shift_semitones(&self) -> f32 {
-        self.glide.current()
+    /// The row the sounding voices follow, for the harness CSV.
+    pub fn sounding(&self) -> Row {
+        self.voices.row()
+    }
+
+    /// The live voices, for tests.
+    pub fn voices(&self) -> impl Iterator<Item = VoiceState> + '_ {
+        self.voices.states()
     }
 
     /// Processes one frame in place (one sample per channel, at most two).
     /// The output is delayed by [`Self::latency`] frames. The detector and
-    /// the shifter see the mean of the channels before gain, so the Gain
-    /// slider doesn't affect detection. An empty frame's mean is NaN, which
-    /// both treat as 0.0. While the wet gate is fully dry, or `mix` is 0.0,
-    /// each output sample is the delayed input times the gain, bit for bit.
+    /// the shifter see the mean of the channels. An empty frame's mean is
+    /// NaN, which both treat as 0.0. While the wet gate is fully dry, or
+    /// `mix` is 0.0, each output sample is the delayed input, bit for bit.
     #[inline]
     pub fn process_frame(&mut self, frame: &mut [f32], settings: Settings) -> Option<Detection> {
         debug_assert!((0.0..=1.0).contains(&settings.mix), "{}", settings.mix);
         let mono = frame.iter().sum::<f32>() / frame.len() as f32;
         let detection = self.tracker.push(mono);
+        let mut update = None;
         if let Some(d) = &detection {
             self.smoother.update(d);
             self.gate.update(d.voiced);
@@ -138,19 +132,20 @@ impl Chain {
                 && let Some(period) = self.smoother.period()
             {
                 let pitch = note::midi_from_hz(self.sample_rate / period);
-                // Onset: no harmony is sounding, so the note is taken at once
-                // and the shift jumps to its interval (no glide after silence).
-                let onset = !self.gate.is_open();
-                if self.stabiliser.update(pitch, onset) == Update::Onset {
-                    let note = self.stabiliser.note().expect("just chosen");
-                    self.glide.jump(settings.interval.interval(note) as f32);
-                }
+                // Onset: no harmony is sounding, so the note is taken at once.
+                update = Some(self.stabiliser.update(pitch, !self.gate.is_open()));
             }
         }
-        self.harmony = self.stabiliser.note().map(|note| Harmony {
-            note,
-            interval: settings.interval.interval(note),
-        });
+        if let Some(note) = self.stabiliser.note() {
+            let row = settings.grid.row_for(note);
+            match update {
+                // The voices jump to their intervals (no glide after silence).
+                Some(Update::Onset) => self.voices.onset(row, !self.gate.is_active()),
+                Some(Update::Changed) => self.voices.change(row),
+                _ if row != self.voices.row() => self.voices.edit(row),
+                _ => {}
+            }
+        }
         if settings.glide_s != self.glide_s {
             self.glide_s = settings.glide_s;
             self.glide_coefficient = shift::glide_coefficient(
@@ -158,10 +153,6 @@ impl Chain {
                 self.sample_rate,
             );
         }
-        let semitones = match self.harmony {
-            Some(h) => self.glide.next(h.interval as f32, self.glide_coefficient),
-            None => self.glide.current(),
-        };
         let period = self.smoother.period();
 
         // Keep the shifter's state in step with the gate. The gate opens
@@ -169,11 +160,11 @@ impl Chain {
         match (self.gate.is_active(), self.analysis.is_running(), period) {
             (true, false, Some(p)) => {
                 let mark = self.analysis.start(p);
-                self.voice.start(mark);
+                self.voices.start_all(mark);
             }
             (false, true, _) => {
                 self.analysis.stop();
-                self.voice.stop();
+                self.voices.stop_all();
             }
             _ => {}
         }
@@ -182,7 +173,9 @@ impl Chain {
         self.delay.process(frame); // frame now holds the delayed dry signal
         match period {
             Some(p) if self.analysis.is_running() => {
-                let shifted = self.voice.next(&self.analysis, p, shift::ratio(semitones));
+                let shifted = self
+                    .voices
+                    .next(Some((&self.analysis, p)), self.glide_coefficient);
                 self.analysis.prune();
                 let (dry_gain, shifted_gain) = self.gate.next_gains();
                 // Skipping the arithmetic keeps the dry path bit-exact (−0.0
@@ -195,12 +188,11 @@ impl Chain {
                 }
             }
             _ => {
-                // Keeps the fade clock in step; returns (1, 0) at rest.
+                // Keeps the glides, the fades and the gate's clock in step;
+                // the gate returns (1, 0) at rest.
+                self.voices.next(None, self.glide_coefficient);
                 self.gate.next_gains();
             }
-        }
-        for sample in frame.iter_mut() {
-            *sample = gain::apply_gain(*sample, settings.gain);
         }
         detection
     }

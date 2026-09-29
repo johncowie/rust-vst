@@ -1,16 +1,17 @@
-//! The harmoniser's objective tests: diatonic thirds on scales, stability
-//! under vibrato and scoops, onset and legato behaviour, out-of-key notes
-//! and clicks, at 44.1 and 48 kHz. Every test prints its numbers.
+//! The single-voice harmony tests: diatonic thirds on scales (from grids
+//! filled with each scale's thirds), stability under vibrato and scoops,
+//! onset and legato behaviour, and clicks, at 44.1 and 48 kHz. Every test
+//! prints its numbers.
 
 mod common;
 
 use common::{
-    Trace, assert_no_clicks, harmonic_tone, midi_to_hz, note_sequence, output_estimates,
-    print_cents, process_traced,
+    MAJOR_THIRDS, NATURAL_MINOR_THIRDS, Trace, assert_no_clicks, harmonic_tone, midi_to_hz,
+    note_sequence, output_estimates, print_cents, process_traced, single_voice, thirds_grid,
 };
-use corral_dsp::chain::{Chain, Harmony, Settings};
-use corral_dsp::eval::{RefFrame, cents_stats, score};
-use corral_dsp::harmony::Scale;
+use corral_dsp::chain::{Chain, Settings};
+use corral_dsp::eval::{RefFrame, cents_stats};
+use corral_dsp::grid::{Grid, Row};
 use corral_dsp::shift::{self, DEFAULT_GLIDE_S};
 
 // Thresholds from work item 0006's acceptance criteria. Any change must carry
@@ -40,8 +41,12 @@ const A_MINOR: [f64; 8] = [57.0, 59.0, 60.0, 62.0, 64.0, 65.0, 67.0, 69.0];
 /// i, ii°, III, iv, v, VI, VII, i.
 const A_MINOR_THIRDS: [i32; 8] = [3, 3, 4, 3, 3, 4, 4, 3];
 
-const KEY_C: u8 = 0;
-const KEY_A: u8 = 9;
+const KEY_C: usize = 0;
+const KEY_A: usize = 9;
+
+fn c_major(glide_s: f32) -> Settings {
+    common::voices(thirds_grid(KEY_C, &MAJOR_THIRDS), glide_s, 1.0)
+}
 
 fn hop_s(sample_rate: f32) -> f64 {
     Chain::new(sample_rate).hop_len() as f64 / f64::from(sample_rate)
@@ -79,16 +84,16 @@ fn sequence_reference(
         .collect()
 }
 
-/// Runs a note sequence fully wet in `key`/`scale` and scores the output
+/// Runs a note sequence fully wet through `grid` and scores the output
 /// against the expected thirds; asserts the share at the default glide and
 /// prints it at Glide 0 too.
-fn assert_scale_gets_thirds(name: &str, midis: &[f64], thirds: &[i32], key: u8, scale: Scale) {
+fn assert_scale_gets_thirds(name: &str, midis: &[f64], thirds: &[i32], grid: Grid) {
     let reference = sequence_reference(midis, thirds, |_| true);
     let mut failed = Vec::new();
     for sample_rate in SAMPLE_RATES {
         let signal = note_sequence(sample_rate, midis, NOTE_S);
         for glide_s in [DEFAULT_GLIDE_S, 0.0] {
-            let settings = common::diatonic(key, scale, glide_s, 1.0);
+            let settings = common::voices(grid, glide_s, 1.0);
             let trace = process_traced(&signal, sample_rate, |_| settings);
             let estimates = output_estimates(&trace.output, sample_rate, latency(sample_rate));
             let stats = cents_stats(
@@ -111,7 +116,12 @@ fn assert_scale_gets_thirds(name: &str, midis: &[f64], thirds: &[i32], key: u8, 
 
 #[test]
 fn c_major_scale_gets_diatonic_thirds() {
-    assert_scale_gets_thirds("C major", &C_MAJOR, &C_MAJOR_THIRDS, KEY_C, Scale::Major);
+    assert_scale_gets_thirds(
+        "C major",
+        &C_MAJOR,
+        &C_MAJOR_THIRDS,
+        thirds_grid(KEY_C, &MAJOR_THIRDS),
+    );
 }
 
 #[test]
@@ -120,8 +130,7 @@ fn a_minor_scale_gets_diatonic_thirds() {
         "A minor",
         &A_MINOR,
         &A_MINOR_THIRDS,
-        KEY_A,
-        Scale::NaturalMinor,
+        thirds_grid(KEY_A, &NATURAL_MINOR_THIRDS),
     );
 }
 
@@ -137,7 +146,7 @@ fn after_silence(sample_rate: f32, seconds: f64, freq_at: impl Fn(f64) -> f64) -
 fn note_changes(trace: &Trace) -> Vec<(usize, i32)> {
     let mut notes: Vec<(usize, i32)> = Vec::new();
     for hop in &trace.hops {
-        if let Some(Harmony { note, .. }) = hop.harmony
+        if let Some(note) = hop.note
             && notes.last().is_none_or(|&(_, last)| last != note)
         {
             notes.push((hop.sample, note));
@@ -149,10 +158,7 @@ fn note_changes(trace: &Trace) -> Vec<(usize, i32)> {
 #[test]
 fn vibrato_never_changes_the_note() {
     let c4 = midi_to_hz(60.0);
-    let expected = Harmony {
-        note: 60,
-        interval: 4,
-    };
+    let third = Row::EMPTY.with(4, true);
     for sample_rate in SAMPLE_RATES {
         for hz in [5.0, 7.0] {
             // Centred so the first voiced hop, which hears about the first
@@ -161,22 +167,19 @@ fn vibrato_never_changes_the_note() {
                 let phase = std::f64::consts::TAU * hz * (t - 0.0125);
                 c4 * 2f64.powf(phase.sin() / 12.0)
             });
-            let settings = common::diatonic(KEY_C, Scale::Major, DEFAULT_GLIDE_S, 1.0);
+            let settings = c_major(DEFAULT_GLIDE_S);
             let trace = process_traced(&signal, sample_rate, |_| settings);
             let changes = note_changes(&trace).len().saturating_sub(1);
             println!("vibrato ±100¢ {hz} Hz {sample_rate} Hz: {changes} note changes");
             let first = trace
                 .hops
                 .iter()
-                .position(|h| h.harmony.is_some())
-                .expect("a harmony");
+                .position(|h| h.note.is_some())
+                .expect("a stable note");
             for hop in trace.hops[first..].iter().filter(|h| h.detection.voiced) {
-                assert_eq!(
-                    hop.harmony,
-                    Some(expected),
-                    "{hz} Hz {sample_rate} Hz at sample {}",
-                    hop.sample
-                );
+                let at = format!("{hz} Hz {sample_rate} Hz at sample {}", hop.sample);
+                assert_eq!(hop.note, Some(60), "{at}");
+                assert_eq!(hop.sounding, third, "{at}");
             }
         }
     }
@@ -190,7 +193,7 @@ fn a_scoop_settles_once_on_the_target() {
             let signal = after_silence(sample_rate, scoop_s + 1.0, |t| {
                 midi_to_hz(target - 2.0 + 2.0 * (t / scoop_s).min(1.0))
             });
-            let settings = common::diatonic(KEY_C, Scale::Major, DEFAULT_GLIDE_S, 1.0);
+            let settings = c_major(DEFAULT_GLIDE_S);
             let trace = process_traced(&signal, sample_rate, |_| settings);
             let notes = note_changes(&trace);
             let onset = SILENCE_S * f64::from(sample_rate);
@@ -233,8 +236,9 @@ fn onset_after_silence_jumps_without_glide() {
         signal.extend(&gap);
 
         // A long glide, so a wrongly applied one would be obvious.
-        let settings = common::diatonic(KEY_C, Scale::Major, shift::MAX_GLIDE_S, 1.0);
+        let settings = c_major(shift::MAX_GLIDE_S);
         let trace = process_traced(&signal, sample_rate, |_| settings);
+        let voice = single_voice(&trace);
         for ((midi, interval), span) in notes.into_iter().zip(&spans) {
             let hop = trace
                 .hops
@@ -242,13 +246,13 @@ fn onset_after_silence_jumps_without_glide() {
                 .find(|h| h.sample >= span.start && h.detection.voiced)
                 .expect("a voiced hop");
             let label = format!("{midi} {sample_rate} Hz");
-            assert_eq!(hop.harmony.map(|h| h.note), Some(midi as i32), "{label}");
-            let wrong = trace.shifts[hop.sample..span.end]
+            assert_eq!(hop.note, Some(midi as i32), "{label}");
+            let wrong = voice[hop.sample..span.end]
                 .iter()
-                .filter(|&&s| s != interval)
+                .filter(|v| v.is_none_or(|v| v.semitones != interval || v.gain != 1.0))
                 .count();
             println!(
-                "onset {label}: first voiced hop {:.1} ms in, shift {interval:+} exactly ({wrong} samples differ)",
+                "onset {label}: first voiced hop {:.1} ms in, shift {interval:+} at full level exactly ({wrong} samples differ)",
                 (hop.sample - span.start) as f64 / f64::from(sample_rate) * 1000.0
             );
             assert_eq!(wrong, 0, "{label}");
@@ -263,8 +267,8 @@ fn legato_step_changes_quickly_and_glides() {
     for sample_rate in SAMPLE_RATES {
         let signal = note_sequence(sample_rate, &[60.0, 62.0], 1.0);
         let step = samples(1.0, sample_rate);
-        let settings = common::diatonic(KEY_C, Scale::Major, glide_s, 1.0);
-        let trace = process_traced(&signal, sample_rate, |_| settings);
+        let trace = process_traced(&signal, sample_rate, |_| c_major(glide_s));
+        let voice = single_voice(&trace);
 
         let h_d = trace
             .hops
@@ -278,7 +282,7 @@ fn legato_step_changes_quickly_and_glides() {
         let h_c = trace
             .hops
             .iter()
-            .position(|h| h.harmony.is_some_and(|h| h.note == 62))
+            .position(|h| h.note == Some(62))
             .expect("D4 chosen");
         let hop_s = hop_s(sample_rate);
         let delay = (h_c as f64 - h_d as f64) * hop_s;
@@ -290,7 +294,14 @@ fn legato_step_changes_quickly_and_glides() {
         assert!(delay <= 0.060 + 3.0 * hop_s, "{sample_rate} Hz: {delay} s");
 
         let start = trace.hops[h_c].sample;
-        let glide = &trace.shifts[start - 1..];
+        let glide: Vec<f32> = voice[start - 1..]
+            .iter()
+            .map(|v| {
+                let v = v.expect("a voice");
+                assert_eq!(v.gain, 1.0, "{sample_rate} Hz: the voice glides, not fades");
+                v.semitones
+            })
+            .collect();
         assert_eq!(glide[0], 4.0, "{sample_rate} Hz: before the change");
         assert_eq!(*glide.last().expect("samples"), 3.0, "{sample_rate} Hz");
         let max_step = 1.001 * (1.0 - shift::glide_coefficient(glide_s, sample_rate));
@@ -302,65 +313,6 @@ fn legato_step_changes_quickly_and_glides() {
         println!("  steepest step {steepest:.6} semitones (limit {max_step:.6})");
         assert!(steepest <= max_step, "{sample_rate} Hz: {steepest}");
     }
-}
-
-#[test]
-fn out_of_key_notes_use_the_note_below() {
-    let midis = [61.0, 63.0, 66.0, 68.0, 70.0];
-    // C#4→F4, Eb4→F#4, F#4→A#4, G#4→C5, Bb4→C#5.
-    let harmonies = [65.0, 66.0, 70.0, 72.0, 73.0];
-    let intervals: Vec<i32> = midis
-        .iter()
-        .zip(harmonies)
-        .map(|(&m, h)| (h - m) as i32)
-        .collect();
-    let mut failed = Vec::new();
-    for sample_rate in SAMPLE_RATES {
-        let signal = note_sequence(sample_rate, &midis, NOTE_S);
-        let settings = common::diatonic(KEY_C, Scale::Major, DEFAULT_GLIDE_S, 1.0);
-        let trace = process_traced(&signal, sample_rate, |_| settings);
-        let estimates = output_estimates(&trace.output, sample_rate, latency(sample_rate));
-
-        for (index, harmony) in harmonies.iter().enumerate() {
-            let reference = sequence_reference(&midis, &intervals, |i| i == index);
-            let stats = cents_stats(
-                &reference,
-                &estimates,
-                hop_s(sample_rate),
-                1.0,
-                TOLERANCE_CENTS,
-            );
-            let voiced = score(&reference, &estimates, hop_s(sample_rate))
-                .voicing_recall
-                .expect("voiced reference frames");
-            let label = format!("{} → {harmony} {sample_rate} Hz", midis[index]);
-            print_cents(&label, &stats);
-            println!("  voiced {voiced:.3}");
-            let median = stats.median_cents.unwrap_or(f64::INFINITY);
-            if median.abs() > TOLERANCE_CENTS {
-                failed.push(format!("{label}: median {median:+.1}¢"));
-            }
-            if voiced < 1.0 {
-                failed.push(format!("{label}: voiced {voiced:.3}"));
-            }
-        }
-
-        let first = trace
-            .hops
-            .iter()
-            .position(|h| h.detection.voiced)
-            .expect("a voiced hop");
-        let dropped = trace.hops[first..]
-            .iter()
-            .filter(|h| h.harmony.is_none())
-            .count();
-        if dropped > 0 {
-            failed.push(format!(
-                "{sample_rate} Hz: {dropped} hops without a harmony"
-            ));
-        }
-    }
-    assert!(failed.is_empty(), "\n{}", failed.join("\n"));
 }
 
 /// The largest interval any case here reaches is a major third.
@@ -382,56 +334,23 @@ fn assert_run_has_no_clicks(
 }
 
 #[test]
-fn no_clicks_on_interval_key_scale_and_glide_changes() {
+fn no_clicks_on_note_and_glide_changes() {
     for sample_rate in SAMPLE_RATES {
         let scale = note_sequence(sample_rate, &C_MAJOR, NOTE_S);
         for glide_s in [DEFAULT_GLIDE_S, 0.0] {
-            let settings = common::diatonic(KEY_C, Scale::Major, glide_s, 1.0);
             assert_run_has_no_clicks(
                 &format!("C major scale, glide {:.0} ms", glide_s * 1000.0),
                 &scale,
                 sample_rate,
-                |_| settings,
+                |_| c_major(glide_s),
             );
         }
 
-        // A3 held while Key steps through all 12 and Scale flips.
-        let a3 = midi_to_hz(57.0);
-        let held = harmonic_tone(sample_rate, 5.0, |_| a3, 12, 0.5);
-        let key_len = samples(0.25, sample_rate);
-        let scale_len = samples(0.5, sample_rate);
-        for glide_s in [0.0, DEFAULT_GLIDE_S] {
-            assert_run_has_no_clicks(
-                &format!(
-                    "A3, key and scale changes, glide {:.0} ms",
-                    glide_s * 1000.0
-                ),
-                &held,
-                sample_rate,
-                |i| {
-                    let key = (i / key_len % 12) as u8;
-                    let scale = if (i / scale_len).is_multiple_of(2) {
-                        Scale::Major
-                    } else {
-                        Scale::NaturalMinor
-                    };
-                    common::diatonic(key, scale, glide_s, 1.0)
-                },
-            );
-        }
-
-        // Glide swept 0 → 250 ms while Key alternates C ↔ G, so the glide
-        // keeps moving.
+        // Glide swept 0 → 250 ms, so the coefficient keeps changing while
+        // the scale's thirds glide.
         let len = scale.len() as f32;
-        let alternate = samples(0.2, sample_rate);
         assert_run_has_no_clicks("C major scale, glide sweep", &scale, sample_rate, |i| {
-            let key = if (i / alternate).is_multiple_of(2) {
-                0
-            } else {
-                7
-            };
-            let glide_s = shift::MAX_GLIDE_S * i as f32 / len;
-            common::diatonic(key, Scale::Major, glide_s, 1.0)
+            c_major(shift::MAX_GLIDE_S * i as f32 / len)
         });
     }
 }

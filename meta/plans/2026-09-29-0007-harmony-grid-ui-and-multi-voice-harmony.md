@@ -883,22 +883,43 @@ case. Update its module doc.
 
 #### Automated Verification:
 
-- [ ] Voice-pool tests pass: `cargo test -p corral-dsp --lib voices`
-- [ ] No allocation: `cargo test -p corral-dsp --test no_alloc`
-- [ ] Every fixed-interval figure is unchanged except the shift sweep:
+- [x] Voice-pool tests pass: `cargo test -p corral-dsp --lib voices`
+- [x] No allocation: `cargo test -p corral-dsp --test no_alloc`
+- [x] Every fixed-interval figure is unchanged except the shift sweep:
       rerun the baseline command into `target/0007-phase3.txt` and diff
       it. The only differences are the sweep's click lines, the
       `harmony` lines for the dropped tests, and the renamed latency
       case, which still prints 1106 / 1202.
-- [ ] The thirds-grid scale scores equal 0006's (0.956 / 0.966 and
+- [x] The thirds-grid scale scores equal 0006's (0.956 / 0.966 and
       0.961 / 0.966 at Glide 50; 1.000 at Glide 0)
-- [ ] The shift-sweep click figure stays under its threshold
+- [x] The shift-sweep click figure stays under its threshold
       (`cargo test -p corral-dsp --test shifter -- --nocapture`)
-- [ ] `mise run check` passes
+- [x] `mise run check` passes
 
 #### Manual Verification:
 
-- [ ] The new shift-sweep click figure is noted for Phase 7
+- [x] The new shift-sweep click figure is noted for Phase 7
+
+#### Results:
+
+- The diff against the baseline shows only the expected lines. Every
+  fixed-interval figure, both thirds-grid scale scores (0.956 / 0.966,
+  0.961 / 0.966 at Glide 50; 1.000 at Glide 0), the onset, legato,
+  scoop and vibrato lines, and the latency (1106 / 1202) are unchanged.
+- Shift sweep (now 24 steps over 4.8 s, each a 20 ms crossfade): max
+  jump 0.1046 at 44.1 kHz (threshold 0.2244, unchanged) and 0.0963 at
+  48 kHz (threshold 0.2062; was 0.0962).
+- The glide-sweep click case without the Key alternation: 0.2366 at
+  44.1 kHz (was 0.2396); 48 kHz unchanged.
+- **Slots test deviation.** Because `claim` revives a fading voice at
+  the same interval, a plain 24 → 0 → 24 change reuses the fading slots
+  and never needs more than 24. Fading voices outnumber a row only when
+  a change matches sounding voices onto intervals whose voices are still
+  fading. The test therefore runs full → {+1…+12} → empty → full with
+  no time between: each round leaves 12 more voices fading, so the
+  second round fills all 48 slots without stealing, and the third
+  steals 12.
+
 
 ---
 

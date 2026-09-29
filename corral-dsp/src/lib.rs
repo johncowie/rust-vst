@@ -4,7 +4,6 @@
 pub mod chain;
 pub mod delay;
 pub mod eval;
-pub mod gain;
 pub mod grid;
 pub mod harmony;
 pub mod note;
@@ -13,4 +12,5 @@ pub mod pitch;
 pub mod psola;
 pub mod shift;
 pub mod stabiliser;
+pub mod voices;
 pub mod wet_gate;

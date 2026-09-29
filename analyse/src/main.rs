@@ -10,11 +10,11 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use corral_dsp::chain::{Chain, Settings};
-use corral_dsp::harmony::{self, IntervalSource, Scale};
+use corral_dsp::harmony::{self, Scale};
 use corral_dsp::{note, shift};
 use hound::{SampleFormat, WavReader, WavSpec, WavWriter};
 
-const USAGE: &str = "usage: analyse <in.wav> [out.wav] [--gain-db <dB>] [--key <C..B>] \
+const USAGE: &str = "usage: analyse <in.wav> [out.wav] [--key <C..B>] \
      [--scale <major|minor>] [--glide <ms>] [--mix <percent>]";
 
 /// Where output goes when no `out.wav` is given.
@@ -28,7 +28,6 @@ const DEFAULT_MIX_PERCENT: f32 = 50.0;
 /// The processing controls, as given on the command line.
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct Options {
-    gain_db: f32,
     /// Pitch class, 0 = C … 11 = B.
     key: u8,
     scale: Scale,
@@ -41,7 +40,6 @@ struct Options {
 impl Default for Options {
     fn default() -> Self {
         Self {
-            gain_db: 0.0,
             key: 0,
             scale: Scale::Major,
             glide_ms: DEFAULT_GLIDE_MS,
@@ -63,15 +61,7 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Option<Args> {
     let mut options = Options::default();
     let mut args = args.into_iter();
     while let Some(arg) = args.next() {
-        // Values are taken as-is, so negative ones like "-6" work.
         match arg.as_str() {
-            "--gain-db" => {
-                options.gain_db = args
-                    .next()?
-                    .parse()
-                    .ok()
-                    .filter(|db: &f32| db.is_finite())?;
-            }
             "--key" => options.key = harmony::parse_key(&args.next()?)?,
             "--scale" => options.scale = harmony::parse_scale(&args.next()?)?,
             "--glide" => {
@@ -161,7 +151,7 @@ impl Format {
 /// per-hop CSV to `csv`. The chain's latency is compensated: `latency` frames
 /// of silence follow the input, and the first `latency` output frames are
 /// dropped, so the output has as many frames as the input and lines up with
-/// it. At 0 dB and 0 % mix the output is bit-identical to the input.
+/// it. At 0 % mix the output is bit-identical to the input.
 fn run<R: Read, W: Write + Seek, C: Write>(
     input: R,
     output: W,
@@ -172,8 +162,8 @@ fn run<R: Read, W: Write + Seek, C: Write>(
     let spec = reader.spec();
     let format = Format::of(spec)?;
 
-    // Both conversions are exact for 16- and 24-bit values, so a gain of
-    // exactly 1.0 gives bit-identical output.
+    // Both conversions are exact for 16- and 24-bit values, so the dry
+    // signal comes out bit-identical.
     let samples: Vec<f32> = match format {
         Format::Int { full_scale, .. } => reader
             .samples::<i32>()
@@ -190,14 +180,10 @@ fn run<R: Read, W: Write + Seek, C: Write>(
     )?;
 
     let settings = Settings {
-        // Exactly 1.0 at 0 dB.
-        gain: 10f32.powf(options.gain_db / 20.0),
         // Exactly 0.0 and 1.0 at 0 % and 100 %.
         mix: options.mix_percent / 100.0,
-        interval: IntervalSource::Diatonic {
-            key: options.key,
-            scale: options.scale,
-        },
+        // A bridge until `--voices` replaces Key and Scale (plan 0007).
+        grid: harmony::diatonic_grid(options.key, options.scale),
         glide_s: options.glide_ms / 1000.0,
     };
     let sample_rate = f64::from(spec.sample_rate);
@@ -227,15 +213,16 @@ fn run<R: Read, W: Write + Seek, C: Write>(
         if let Some(detection) = detection.filter(|_| index < frames) {
             summary.hops += 1;
             summary.voiced_hops += usize::from(detection.voiced);
-            // The harmony is kept through unvoiced hops; blank it there.
-            let harmony = match chain.harmony().filter(|_| detection.voiced) {
-                Some(h) => format!(
-                    "{},{:+},{}",
-                    note::format_name(h.note),
-                    h.interval,
-                    note::format_name(h.note + h.interval)
+            // The note is kept through unvoiced hops; blank it there. A
+            // diatonic grid's rows hold one interval each.
+            let sounding = chain.sounding().intervals().next();
+            let harmony = match (chain.stable_note().filter(|_| detection.voiced), sounding) {
+                (Some(note), Some(interval)) => format!(
+                    "{},{interval:+},{}",
+                    note::format_name(note),
+                    note::format_name(note + i32::from(interval))
                 ),
-                None => ",,".to_string(),
+                _ => ",,".to_string(),
             };
             writeln!(
                 csv,
@@ -325,6 +312,8 @@ mod tests {
     use std::f32::consts::TAU;
     use std::io::Cursor;
 
+    use corral_dsp::grid::Grid;
+
     use super::*;
 
     const SAMPLE_RATE: u32 = 44_100;
@@ -385,10 +374,9 @@ mod tests {
             .collect()
     }
 
-    /// Dry only, so the output is the input times the gain.
-    fn dry(gain_db: f32) -> Options {
+    /// Dry only, so the output is the input.
+    fn dry() -> Options {
         Options {
-            gain_db,
             mix_percent: 0.0,
             ..Options::default()
         }
@@ -417,12 +405,12 @@ mod tests {
     }
 
     #[test]
-    fn int_output_is_bit_identical_at_0_db() {
+    fn int_output_is_bit_identical_dry() {
         for bits in [16, 24] {
             for channels in [1, 2] {
                 let spec = spec(SampleFormat::Int, bits, channels);
                 let input = int_samples(bits, &test_signal(channels));
-                let (output, _) = run_bytes(&int_wav(spec, &input), dry(0.0)).unwrap();
+                let (output, _) = run_bytes(&int_wav(spec, &input), dry()).unwrap();
                 let (out_spec, output) = read_ints(&output);
                 assert_eq!(out_spec, spec);
                 assert_eq!(output, input, "{bits}-bit, {channels} ch");
@@ -431,11 +419,11 @@ mod tests {
     }
 
     #[test]
-    fn float_output_is_bit_identical_at_0_db() {
+    fn float_output_is_bit_identical_dry() {
         for channels in [1, 2] {
             let spec = spec_float(channels);
             let input = test_signal(channels);
-            let (output, _) = run_bytes(&float_wav(spec, &input), dry(0.0)).unwrap();
+            let (output, _) = run_bytes(&float_wav(spec, &input), dry()).unwrap();
             let mut reader = WavReader::new(output.as_slice()).unwrap();
             assert_eq!(reader.spec(), spec);
             let output: Vec<f32> = reader.samples::<f32>().map(Result::unwrap).collect();
@@ -445,23 +433,11 @@ mod tests {
     }
 
     #[test]
-    fn minus_6_db_halves_16_bit_samples() {
-        let spec = spec(SampleFormat::Int, 16, 2);
-        let input = int_samples(16, &test_signal(2));
-        let (output, _) = run_bytes(&int_wav(spec, &input), dry(-6.0206)).unwrap();
-        let (_, output) = read_ints(&output);
-        for (i, o) in input.iter().zip(&output) {
-            let expected = f64::from(*i) / 2.0;
-            assert!((f64::from(*o) - expected).abs() <= 1.0, "{i} → {o}");
-        }
-    }
-
-    #[test]
     fn csv_has_one_row_per_hop() {
         let spec = spec(SampleFormat::Int, 16, 1);
         let input = int_samples(16, &test_signal(1));
         let frames = input.len();
-        let (_, csv) = run_bytes(&int_wav(spec, &input), dry(0.0)).unwrap();
+        let (_, csv) = run_bytes(&int_wav(spec, &input), dry()).unwrap();
 
         let chain = Chain::new(SAMPLE_RATE as f32);
         let (window, hop) = (chain.window_len(), chain.hop_len());
@@ -508,20 +484,17 @@ mod tests {
         ];
         for (name, spec, bits) in cases {
             let wav = int_wav(spec, &int_samples(bits, &signal));
-            assert!(run_bytes(&wav, dry(0.0)).is_err(), "{name} was accepted");
+            assert!(run_bytes(&wav, dry()).is_err(), "{name} was accepted");
         }
         let wav = int_wav(
             spec(SampleFormat::Int, 16, 3),
             &int_samples(16, &test_signal(3)),
         );
-        assert!(
-            run_bytes(&wav, dry(0.0)).is_err(),
-            "3 channels were accepted"
-        );
+        assert!(run_bytes(&wav, dry()).is_err(), "3 channels were accepted");
     }
 
     #[test]
-    fn committed_fixtures_pass_through_bit_identical_at_0_db() {
+    fn committed_fixtures_pass_through_bit_identical_dry() {
         let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../corral-dsp/tests/fixtures");
         let mut checked = 0;
         for entry in fs::read_dir(&dir).unwrap() {
@@ -530,7 +503,7 @@ mod tests {
                 continue;
             }
             let input = fs::read(&path).unwrap();
-            let (output, _) = run_bytes(&input, dry(0.0)).unwrap();
+            let (output, _) = run_bytes(&input, dry()).unwrap();
             let (mut before, mut after) = (
                 WavReader::new(input.as_slice()).unwrap(),
                 WavReader::new(output.as_slice()).unwrap(),
@@ -595,9 +568,8 @@ mod tests {
         // Detect the output's pitch with a dry chain.
         let mut chain = Chain::new(SAMPLE_RATE as f32);
         let settings = Settings {
-            gain: 1.0,
             mix: 0.0,
-            interval: IntervalSource::Fixed(0),
+            grid: Grid::EMPTY,
             glide_s: shift::DEFAULT_GLIDE_S,
         };
         let edge = 0.15;
@@ -646,7 +618,6 @@ mod tests {
         assert_eq!(options.scale, Scale::Major);
         assert_eq!(options.glide_ms, 50.0);
         assert_eq!(options.mix_percent, 50.0);
-        assert_eq!(options.gain_db, 0.0);
     }
 
     #[test]
@@ -672,19 +643,11 @@ mod tests {
     }
 
     #[test]
-    fn gain_accepts_negative_values_anywhere() {
-        let parsed = args(&["--gain-db", "-6", "a.wav", "b.wav"]).unwrap();
-        assert_eq!(parsed.output, PathBuf::from("b.wav"));
-        assert_eq!(parsed.options.gain_db, -6.0);
-    }
-
-    #[test]
     fn bad_arguments_are_rejected() {
         for bad in [
             &[][..],
             &["a.wav", "b.wav", "c.wav"],
-            &["a.wav", "--gain-db"],
-            &["a.wav", "--gain-db", "loud"],
+            &["a.wav", "--gain-db", "-6"],
             &["a.wav", "--verbose"],
             &["a.wav", "--shift", "4"],
             &["a.wav", "--key", "H"],

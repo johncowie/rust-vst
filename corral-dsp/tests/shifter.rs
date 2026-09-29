@@ -9,6 +9,7 @@ use common::{
 };
 use corral_dsp::chain::{Chain, Settings};
 use corral_dsp::eval::{CentsStats, RefFrame, cents_stats};
+use corral_dsp::grid::INTERVALS;
 use corral_dsp::shift;
 
 // Thresholds from work item 0005's acceptance criteria. Any change must carry
@@ -28,7 +29,7 @@ const SAMPLE_RATES: [f32; 2] = [44_100.0, 48_000.0];
 const TOLERANCE_CENTS: f64 = 25.0;
 const REF_HOP_S: f64 = 0.01;
 
-fn wet(shift: i32) -> Settings {
+fn wet(shift: i8) -> Settings {
     common::fixed(shift, 1.0)
 }
 
@@ -60,7 +61,7 @@ fn reference(seconds: f64, f0_at: impl Fn(f64) -> Option<f64>) -> Vec<RefFrame> 
 fn shifted_stats(
     signal: &[f32],
     sample_rate: f32,
-    shift: i32,
+    shift: i8,
     reference: &[RefFrame],
 ) -> CentsStats {
     let (output, _) = process(signal, sample_rate, |_| wet(shift));
@@ -69,7 +70,7 @@ fn shifted_stats(
         reference,
         &estimates,
         hop_s(sample_rate),
-        f64::from(shift::ratio(shift as f32)),
+        f64::from(shift::ratio(f32::from(shift))),
         TOLERANCE_CENTS,
     )
 }
@@ -165,7 +166,7 @@ fn silence_noise_and_mix_zero_are_the_delayed_input() {
 }
 
 /// The output's level relative to the input's, in dB, away from the edges.
-fn level_db(signal: &[f32], sample_rate: f32, shift: i32) -> f64 {
+fn level_db(signal: &[f32], sample_rate: f32, shift: i8) -> f64 {
     let latency = latency(sample_rate);
     let edge = (EDGE_S * f64::from(sample_rate)) as usize;
     let (output, _) = process(signal, sample_rate, |_| wet(shift));
@@ -235,11 +236,12 @@ fn no_clicks_during_a_shift_sweep() {
         let sr = f64::from(sample_rate);
         let a3 = midi_to_hz(57.0);
 
-        // −12 → +12, one semitone every 200 ms.
-        let signal = harmonic_tone(sample_rate, 5.0, |_| a3, 8, 0.5);
+        // −12 → +12 (skipping 0), one semitone every 200 ms. Each step
+        // edits the sounding row, so it is a 20 ms crossfade, not a glide.
+        let signal = harmonic_tone(sample_rate, 4.8, |_| a3, 8, 0.5);
         let step_len = (0.2 * sr) as usize;
         let (output, _) = process(&signal, sample_rate, |i| {
-            wet((-12 + (i / step_len) as i32).min(12))
+            wet(INTERVALS[(i / step_len).min(INTERVALS.len() - 1)])
         });
         assert_no_clicks(
             &format!("shift sweep {sample_rate} Hz"),
