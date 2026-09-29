@@ -1263,11 +1263,11 @@ their test, which no longer have callers.
 
 #### Automated Verification:
 
-- [ ] `cargo test -p corral` passes
-- [ ] `grep -rn "harmony::\|IntervalSource\|gain::" corral corral-dsp analyse`
+- [x] `cargo test -p corral` passes
+- [x] `grep -rn "harmony::\|IntervalSource\|gain::" corral corral-dsp analyse`
       finds nothing
-- [ ] `mise run build-universal` succeeds
-- [ ] `mise run check` passes
+- [x] `mise run build-universal` succeeds
+- [x] `mise run check` passes
 
 #### Manual Verification:
 
@@ -1285,6 +1285,16 @@ their test, which no longer have callers.
       notes: no audible clicks, and the latency Live reports stays at
       1103 / 1200 samples
 - [ ] Reopening the set starts with an empty grid (expected; not saved)
+
+#### Results:
+
+- `cargo test -p corral` now has no tests: the only ones were the Key
+  and Scale param tests, which went with the params.
+- Two editor details the plan didn't settle:
+  - egui's default fonts have no bold face, so the centre column's
+    labels are drawn twice, 0.6 px apart;
+  - the readout shrinks its font to fit the strip, since a full row
+    lists 24 voices.
 
 ---
 

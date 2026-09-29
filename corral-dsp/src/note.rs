@@ -65,23 +65,15 @@ pub fn unpack(bits: u32) -> Option<Note> {
     })
 }
 
-/// Packs two notes (the stable note and the harmony note) into one `u32`
-/// as two `i16`s, or `UNVOICED` for none. The pair (−1, −1) would collide
-/// with `UNVOICED`, but MIDI notes are never negative here.
-pub fn pack_pair(pair: Option<(i32, i32)>) -> u32 {
-    match pair {
-        None => UNVOICED,
-        Some((a, b)) => (u32::from(a as i16 as u16) << 16) | u32::from(b as i16 as u16),
-    }
+/// Packs a MIDI note (or none) into one `u32` for the audio → editor
+/// atomic. MIDI −1 would collide with `UNVOICED`, but notes are never
+/// negative here.
+pub fn pack_midi(midi: Option<i32>) -> u32 {
+    midi.map_or(UNVOICED, |m| m as u32)
 }
 
-pub fn unpack_pair(bits: u32) -> Option<(i32, i32)> {
-    (bits != UNVOICED).then(|| {
-        (
-            i32::from((bits >> 16) as u16 as i16),
-            i32::from(bits as u16 as i16),
-        )
-    })
+pub fn unpack_midi(bits: u32) -> Option<i32> {
+    (bits != UNVOICED).then_some(bits as i32)
 }
 
 #[cfg(test)]
@@ -212,16 +204,13 @@ mod tests {
     }
 
     #[test]
-    fn pack_pair_round_trips_across_the_harmony_range() {
-        // E2 (40) up to B5 + 12 (95).
-        for a in 40..=95 {
-            for b in 40..=95 {
-                let packed = pack_pair(Some((a, b)));
-                assert_ne!(packed, UNVOICED);
-                assert_eq!(unpack_pair(packed), Some((a, b)));
-            }
+    fn pack_midi_round_trips_over_midi() {
+        for midi in 0..=127 {
+            let packed = pack_midi(Some(midi));
+            assert_ne!(packed, UNVOICED);
+            assert_eq!(unpack_midi(packed), Some(midi));
         }
-        assert_eq!(pack_pair(None), UNVOICED);
-        assert_eq!(unpack_pair(UNVOICED), None);
+        assert_eq!(pack_midi(None), UNVOICED);
+        assert_eq!(unpack_midi(UNVOICED), None);
     }
 }

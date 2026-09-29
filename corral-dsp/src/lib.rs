@@ -5,7 +5,6 @@ pub mod chain;
 pub mod delay;
 pub mod eval;
 pub mod grid;
-pub mod harmony;
 pub mod note;
 pub mod period;
 pub mod pitch;

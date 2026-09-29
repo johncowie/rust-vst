@@ -7,8 +7,7 @@ use nice_plug_egui::{
 };
 
 use corral_dsp::chain::{Chain, Settings};
-use corral_dsp::grid::Grid;
-use corral_dsp::harmony::{self, Scale};
+use corral_dsp::grid::SharedGrid;
 use corral_dsp::{note, shift};
 
 use crate::editor::CorralEditor;
@@ -28,88 +27,24 @@ pub struct Corral {
     /// The last value stored in `note_readout`, so the audio thread only
     /// stores and repaints when it changes.
     last_note_readout: u32,
-    /// The last hop's (stable note, harmony note), packed with
-    /// `note::pack_pair`; `note::UNVOICED` when nothing is sounding.
-    harmony_readout: Arc<AtomicU32>,
-    /// The last value stored in `harmony_readout`.
-    last_harmony_readout: u32,
+    /// The last hop's stable note, packed with `note::pack_midi`;
+    /// `note::UNVOICED` while unvoiced. The editor derives the voices from
+    /// it and the grid.
+    stable_readout: Arc<AtomicU32>,
+    /// The last value stored in `stable_readout`.
+    last_stable_readout: u32,
+    /// Toggled by the editor, copied by `process()` once per buffer. Not a
+    /// parameter, so it isn't saved: every load starts empty.
+    grid: Arc<SharedGrid>,
     /// Held until the host asks for the editor, which it does once.
     initial_editor: Option<CorralEditor>,
 }
 
-/// The key of the harmony. Declared C…B, so `as u8` is the pitch class.
-/// The IDs are stored in saved sets and automation, so they must never change.
-#[derive(Enum, Clone, Copy, Debug, PartialEq, Eq)]
-enum KeyParam {
-    #[id = "c"]
-    #[name = "C"]
-    C,
-    #[id = "c-sharp"]
-    #[name = "C#"]
-    CSharp,
-    #[id = "d"]
-    #[name = "D"]
-    D,
-    #[id = "d-sharp"]
-    #[name = "D#"]
-    DSharp,
-    #[id = "e"]
-    #[name = "E"]
-    E,
-    #[id = "f"]
-    #[name = "F"]
-    F,
-    #[id = "f-sharp"]
-    #[name = "F#"]
-    FSharp,
-    #[id = "g"]
-    #[name = "G"]
-    G,
-    #[id = "g-sharp"]
-    #[name = "G#"]
-    GSharp,
-    #[id = "a"]
-    #[name = "A"]
-    A,
-    #[id = "a-sharp"]
-    #[name = "A#"]
-    ASharp,
-    #[id = "b"]
-    #[name = "B"]
-    B,
-}
-
-/// The IDs are stored in saved sets and automation, so they must never change.
-#[derive(Enum, Clone, Copy, Debug, PartialEq, Eq)]
-enum ScaleParam {
-    #[id = "major"]
-    #[name = "Major"]
-    Major,
-    #[id = "natural-minor"]
-    #[name = "Natural minor"]
-    NaturalMinor,
-}
-
-impl From<ScaleParam> for Scale {
-    fn from(scale: ScaleParam) -> Self {
-        match scale {
-            ScaleParam::Major => Scale::Major,
-            ScaleParam::NaturalMinor => Scale::NaturalMinor,
-        }
-    }
-}
-
 #[derive(Params)]
 struct CorralParams {
-    /// The harmony's key. The ID is stored in saved sets and automation,
-    /// so it must never change.
-    #[id = "key"]
-    key: EnumParam<KeyParam>,
-    /// Major or natural minor. ID must never change.
-    #[id = "scale"]
-    scale: EnumParam<ScaleParam>,
     /// The glide's time constant in ms. Not smoothed: Chain glides the
-    /// interval itself and caches the coefficient. ID must never change.
+    /// voices itself and caches the coefficient. The ID is stored in saved
+    /// sets and automation, so it must never change.
     #[id = "glide"]
     glide: FloatParam,
     /// Dry/wet, 0.0–1.0, shown as a percentage. ID must never change.
@@ -121,13 +56,15 @@ impl Default for Corral {
     fn default() -> Self {
         let params = Arc::new(CorralParams::default());
         let note_readout = Arc::new(AtomicU32::new(note::UNVOICED));
-        let harmony_readout = Arc::new(AtomicU32::new(note::UNVOICED));
+        let stable_readout = Arc::new(AtomicU32::new(note::UNVOICED));
+        let grid = Arc::new(SharedGrid::new());
 
         Self {
             initial_editor: Some(CorralEditor::new(
                 params.clone(),
+                grid.clone(),
                 note_readout.clone(),
-                harmony_readout.clone(),
+                stable_readout.clone(),
             )),
             params,
             editor_state: editor::default_state(),
@@ -137,8 +74,9 @@ impl Default for Corral {
             chain: Chain::new(48_000.0),
             note_readout,
             last_note_readout: note::UNVOICED,
-            harmony_readout,
-            last_harmony_readout: note::UNVOICED,
+            stable_readout,
+            last_stable_readout: note::UNVOICED,
+            grid,
         }
     }
 }
@@ -146,8 +84,6 @@ impl Default for Corral {
 impl Default for CorralParams {
     fn default() -> Self {
         Self {
-            key: EnumParam::new("Key", KeyParam::C),
-            scale: EnumParam::new("Scale", ScaleParam::Major),
             glide: FloatParam::new(
                 "Glide",
                 1000.0 * shift::DEFAULT_GLIDE_S,
@@ -223,12 +159,9 @@ impl Plugin for Corral {
         _context: &mut impl ProcessContext<Self>,
     ) -> ProcessStatus {
         let mut last_detection = None;
-        // Read once per buffer: none of them is smoothed. The grid is a
-        // bridge until the grid editor replaces Key and Scale (plan 0007).
-        let grid = harmony::diatonic_grid(
-            self.params.key.value() as u8,
-            self.params.scale.value().into(),
-        );
+        // Read once per buffer: neither is smoothed. A toggle torn across
+        // this copy only arrives a buffer later.
+        let grid = self.grid.snapshot();
         let glide_s = self.params.glide.value() / 1000.0;
 
         for mut channel_samples in buffer.iter_samples() {
@@ -270,15 +203,10 @@ impl Plugin for Corral {
                 changed = true;
             }
             // The chain keeps its note through unvoiced hops; blank it here.
-            let packed = note::pack_pair(
-                self.chain
-                    .stable_note()
-                    .filter(|_| detection.voiced)
-                    .map(|n| (n, n + i32::from(single_interval(grid, n)))),
-            );
-            if packed != self.last_harmony_readout {
-                self.last_harmony_readout = packed;
-                self.harmony_readout.store(packed, Ordering::Relaxed);
+            let packed = note::pack_midi(self.chain.stable_note().filter(|_| detection.voiced));
+            if packed != self.last_stable_readout {
+                self.last_stable_readout = packed;
+                self.stable_readout.store(packed, Ordering::Relaxed);
                 changed = true;
             }
         }
@@ -288,11 +216,6 @@ impl Plugin for Corral {
 
         ProcessStatus::Normal
     }
-}
-
-/// The one interval a diatonic grid's row holds for `note`.
-fn single_interval(grid: Grid, note: i32) -> i8 {
-    grid.row_for(note).intervals().next().unwrap_or(0)
 }
 
 impl ClapPlugin for Corral {
@@ -311,25 +234,3 @@ impl Vst3Plugin for Corral {
 
 nice_export_clap!(Corral);
 nice_export_vst3!(Corral);
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn key_variants_are_their_pitch_classes() {
-        let names = KeyParam::variants();
-        assert_eq!(names.len(), 12);
-        for (pitch_class, name) in names.iter().enumerate() {
-            let key = KeyParam::from_index(pitch_class);
-            assert_eq!(key as u8 as usize, pitch_class, "{name}");
-            assert_eq!(corral_dsp::harmony::format_key(key as u8), *name);
-        }
-    }
-
-    #[test]
-    fn scale_variants_map_to_the_dsp_scales() {
-        assert_eq!(Scale::from(ScaleParam::Major), Scale::Major);
-        assert_eq!(Scale::from(ScaleParam::NaturalMinor), Scale::NaturalMinor);
-    }
-}
