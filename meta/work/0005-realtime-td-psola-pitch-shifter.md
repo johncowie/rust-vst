@@ -5,12 +5,12 @@ title: "Realtime TD-PSOLA Pitch Shifter"
 date: "2026-09-28T09:14:07+00:00"
 author: John Cowie Del Corral
 producer: create-work-item
-status: draft
+status: done
 kind: story
 priority: high
 blocked_by: ["work-item:0004"]
 tags: [phase-4, dsp, pitch-shifting, td-psola, latency, testing, docs]
-last_updated: "2026-09-28T09:14:07+00:00"
+last_updated: "2026-09-29T08:03:49+00:00"
 last_updated_by: John Cowie Del Corral
 schema_version: 1
 ---
