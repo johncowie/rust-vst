@@ -1039,18 +1039,77 @@ If an assertion misses:
 
 #### Automated Verification:
 
-- [ ] Multi-voice tests pass and print figures:
+- [x] Multi-voice tests pass and print figures:
       `cargo test -p corral-dsp --test voices -- --nocapture`
-- [ ] The CPU test runs and prints four rows:
+- [x] The CPU test runs and prints four rows:
       `cargo test --release -p corral-dsp --test cpu -- --ignored --nocapture`
-- [ ] `mise run check` passes (the CPU test is ignored there)
+- [x] `mise run check` passes (the CPU test is ignored there)
 
 #### Manual Verification:
 
 - [ ] Listen to a test-written or harness WAV of row C = {−5, +4} on a
       held C4: G3 and E4 are clear, and toggles don't tick
-- [ ] Results (figures, CPU on arm64 and under Rosetta) recorded below
+- [x] Results (figures, CPU on arm64 and under Rosetta) recorded below
       for the README
+
+#### Results:
+
+No tuning was needed: every assertion passed on the first run, with
+`FADE_S` at 20 ms and the equal-power curve.
+
+- **Empty grid, Mix 50%:** the output is exactly 0.5 × the delayed dry
+  signal (largest deviation 0.0 at both rates).
+  - **Deviation from the plan:** the scale is not voiced throughout.
+    The detector calls 11 hops unvoiced at semitone steps. Two of those
+    steps (4.43 s and 5.23 s) have two unvoiced hops in a row, which
+    closes the gate.
+  - So the test skips 30 ms from each such pair only (2 closes, 2646 /
+    2880 samples). A lone unvoiced hop doesn't move the gate, so it is
+    still checked.
+- **Two voices on C4:**
+  - G3 alone: median −0.2¢ (44.1 kHz) and +0.2¢ (48 kHz);
+  - E4 alone: +0.1¢ at both rates;
+  - both within ±25¢ on 100% of frames;
+  - the sum's largest difference from the voices alone is 1.19e-7.
+- **Matched voice, C4 {+4} → D4 {+3}, Glide 50 ms:** one voice at full
+  level throughout.
+  - It starts gliding 17.4 ms (44.1 kHz) and 10.7 ms (48 kHz) after D4
+    is detected.
+  - Steepest step: 0.000453 against a limit of 0.000454 at 44.1 kHz,
+    and 0.000417 against 0.000417 at 48 kHz.
+- **Surplus voices:**
+  - +7 fades in over 882 / 960 samples and out over 881 / 960, i.e.
+    20 ms at both rates.
+  - Largest jump at Glide 50 and 0: 0.2255–0.2270 at 44.1 kHz
+    (threshold 0.5828) and 0.2077–0.2089 at 48 kHz (threshold 0.5358).
+- **Toggles on a held A3:**
+  - 10 fades of 881–882 samples (44.1 kHz) and 960 (48 kHz); every other
+    voice stays at full level.
+  - Revival of +12 after 5 ms: it falls to gain 0.924, then takes 221 /
+    240 samples to recover, the same time it spent falling.
+  - Largest jump, against the threshold for the loudest set on together,
+    {+4, +7, +12}: 0.2343 (threshold 0.7743) at 44.1 kHz and 0.2196
+    (threshold 0.7117) at 48 kHz.
+- **Onset after silence, Glide 250 ms:**
+  - C4 {−5, +4} and D4 {+3}: 0 samples differ from the exact intervals
+    at full level.
+  - First voiced hop: 36.7 / 30.6 ms after the note starts at 44.1 kHz,
+    and 30.6 / 32.0 ms at 48 kHz.
+- **CPU:** 10 s at 48 kHz, 512-frame stereo blocks, 10 667 µs of real
+  time each, on an Apple Silicon Mac. Each cell is mean / p99 / max, in
+  µs, with the mean's share of real time in brackets:
+
+  | Grid                  | arm64 (native)          | x86_64 (Rosetta)        |
+  |-----------------------|-------------------------|-------------------------|
+  | empty                 | 53.7 / 61.5 / 79.3 (0.5%)   | 63.3 / 76.1 / 84.0 (0.6%)   |
+  | 1 voice (+4)          | 71.9 / 82.7 / 102.0 (0.7%)  | 89.8 / 107.0 / 120.6 (0.8%) |
+  | 3 voices (−5, +4, +7) | 100.1 / 115.6 / 199.2 (0.9%)| 133.9 / 153.3 / 159.7 (1.3%)|
+  | 24 voices (full row)  | 371.5 / 409.8 / 507.2 (3.5%)| 580.4 / 651.5 / 749.1 (5.4%)|
+
+  Each voice costs about 13 µs per block native and 22 µs under
+  Rosetta, so the optimisations deferred in Performance Considerations
+  aren't needed. Run the Rosetta figure with `--target
+  x86_64-apple-darwin` added.
 
 ---
 
