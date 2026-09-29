@@ -1380,14 +1380,26 @@ clock), and why it costs little per voice.
 
 #### Automated Verification:
 
-- [ ] `mise run check` passes
+- [x] `mise run check` passes
 
 #### Manual Verification:
 
-- [ ] The README's figures match the latest `--nocapture` output and
+- [x] The README's figures match the latest `--nocapture` output and
       the CPU run
-- [ ] Phase 6's end-to-end item is ticked only after the Live checks in
+- [x] Phase 6's end-to-end item is ticked only after the Live checks in
       Phase 6 of this plan
+
+#### Results:
+
+- The README's figures were checked against a fresh `--nocapture` run of
+  the `voices`, `harmony`, `shifter`, `latency`, `fixtures` and
+  `synthetic` suites. The CPU table is Phase 4's run; it wasn't rerun.
+- The harmony click table loses the Key/Scale alternation row, and its
+  glide-sweep row is now 0.237 / 0.210 (was 0.240 / 0.210). The
+  out-of-key test went with `harmony.rs`'s interval tables, so the README
+  no longer lists it.
+- ROADMAP Phase 6: the editor and end-to-end items stay unticked until
+  the Live checks in Phase 6 of this plan are done; the rest are ticked.
 
 ---
 

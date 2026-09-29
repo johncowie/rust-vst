@@ -85,22 +85,56 @@ causal.
   signal and the shifted one over 10 ms with equal power (cos/sin). While
   it is fully closed, or `Mix` is 0 %, the chain skips the mix arithmetic,
   so the output is the delayed input bit for bit.
-- **Glide** (`shift.rs`). The shift in semitones follows the interval
-  chosen for the stabiliser's note (`stabiliser.rs`) through a one-pole
-  filter in semitones, with `Glide` as its time constant. At voicing
-  onset it jumps straight to the interval. It has no minimum ramp: a step
-  in the ratio only moves where the next grain is placed, so even an
-  instant change doesn't click. See the README's
+- **Glide** (`shift.rs`). Each voice's shift in semitones follows its
+  interval in the grid's row for the stabiliser's note (`stabiliser.rs`)
+  through a one-pole filter in semitones, with `Glide` as its time
+  constant. At voicing onset it jumps straight to the interval. It has no
+  minimum ramp: a step in the ratio only moves where the next grain is
+  placed, so even an instant change doesn't click. See the README's
   [Harmony](../README.md#harmony) section.
-- **Stereo.** The detector and shifter work on the mono sum. The shifted
-  voice is added equally to both channels, and the dry path stays stereo.
+- **Stereo.** The detector and shifter work on the mono sum. The summed
+  voices are added equally to both channels, and the dry path stays stereo.
+
+### Several voices over one analysis
+
+The harmony grid can sound up to 24 voices at once, each at its own
+ratio. They all shift the same input, so the shifter is split in two
+(`psola.rs`):
+
+- **`Analysis`**, one per chain, holds everything that depends only on the
+  input: the ring buffer of the mono sum, the pitch-mark tracker and the
+  confirmed marks. It runs once per sample whatever the number of voices.
+- **`Voice`**, one per sounding interval, holds only what depends on the
+  ratio: its synthesis clock (where its next synthesis mark falls) and its
+  active grains (5 at most at +12, with room for 8; each is a source mark,
+  a centre and a half-length). It reads grains out of the shared ring.
+- **Per sample**, the chain pushes the input into the analysis, runs every
+  voice's `next`, then lets the analysis prune the marks no grain can use
+  any more (older than o − 2·P_max, always keeping the last).
+- **Starting.** When the wet gate opens, the analysis places its first mark
+  and every voice live then starts synthesising from it. A voice added
+  mid-note (a fade-in or an edit) starts at the latest confirmed mark at or
+  before the output time, so it lines up with the marks already there.
+
+A voice's own work per sample is a glide multiply-add, one `exp2` for its
+ratio and the overlap-add of its few grains (a cosine and an interpolated
+read each), plus a scan of the marks once per period when it places a
+grain. Nothing in the analysis is repeated per voice, so each extra voice
+costs about 13 µs per 512-frame block on Apple Silicon (22 µs under
+Rosetta); 24 voices use 3.5 % (5.4 %) of real time at 48 kHz. See the
+README's [CPU](../README.md#cpu) table. With a single voice the split
+changed none of the shifter's printed test figures.
+
+The voice pool (`voices.rs`) decides which voices sound and fades them in
+and out over 20 ms; the fades multiply a voice's output, so the grains
+themselves don't change.
 
 ### Latency
 
 The chain's latency is fixed at L = ⌈2 · sr / 80⌉ samples: two periods of
 the lowest detectable pitch (80 Hz). That is 1103 samples at 44.1 kHz,
 1200 at 48 kHz and 2400 at 96 kHz, 25 ms in each case. It doesn't depend on
-pitch, `Key`, `Scale`, `Glide` or `Mix`, because in VST3 a change of latency restarts audio
+pitch, the grid, the number of voices, `Glide` or `Mix`, because in VST3 a change of latency restarts audio
 in Live.
 
 - With input time n, the output sample being made is o = n − L.
@@ -139,7 +173,9 @@ resynthesises, then resamples to restore the duration.
 ## 4. Why Corral uses TD-PSOLA
 
 Corral harmonises a single voice or monophonic instrument, so TD-PSOLA's
-main limitation, one voice at a time, costs nothing. Its strengths are what
+main limitation, one input voice at a time, costs nothing. (Several
+*output* voices are cheap: see
+[Several voices over one analysis](#several-voices-over-one-analysis).) Its strengths are what
 a vocal harmoniser needs:
 
 - it keeps formants, so the harmony sounds like the same singer;

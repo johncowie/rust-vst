@@ -61,7 +61,7 @@ The goal is to prove that audio flows through our code and that we can change it
 ## Phase 5: Key-aware harmony (the auto-harmoniser)
 
 - [x] `Key` parameter (C to B) and `Scale` parameter (major, then natural minor, then others)
-  - Major and natural minor only (0006); other scales stay open for Phase 6
+  - Major and natural minor only (0006); superseded by the harmony grid (Phase 6)
 - [x] Map the detected note to a scale degree
 - [x] Compute the **diatonic third above** within the scale (C→E major 3rd, D→F minor 3rd, E→G minor 3rd, etc.)
 - [x] Choose how to handle out-of-key input notes: snap to the nearest scale note, or use a fixed fallback interval
@@ -71,10 +71,21 @@ The goal is to prove that audio flows through our code and that we can change it
 - [x] Unit tests for the key/scale/interval logic (pure functions, easy to test exhaustively)
 - [x] End-to-end test in Ableton: sing a scale in C and hear correct diatonic thirds
 
-## Phase 6: Refinement and extras
+## Phase 6: Harmony grid
 
-- [ ] Choice of harmony interval (3rd above, 3rd below, 5th, 6th, octave)
-- [ ] Multiple harmony voices (e.g. 3rd + 5th for a triad) with per-voice level and pan
+- [x] A grid of toggles, one row per pitch class of the stable note and one column per interval (−12…+12), that replaces `Key` and `Scale`
+- [x] Several voices, one per "on" cell: matched by position when the note changes (they glide), with surplus and edited voices faded over 20 ms
+- [x] Remove `Gain`
+- [ ] The grid editor (960×560, cells labelled with their notes, readout `C4 → G3 · E4`)
+- [x] Harness `--voices` and the voice columns in the CSV
+- [x] Measure the CPU cost of 24 voices (3.5 % of real time native, 5.4 % under Rosetta)
+- [ ] End-to-end test in Ableton: program a row, sing, and hear the voices without clicks
+
+## Phase 7: Refinement and extras
+
+- [x] ~~Choice of harmony interval (3rd above, 3rd below, 5th, 6th, octave)~~ (Phase 6)
+- [x] ~~Multiple harmony voices (e.g. 3rd + 5th for a triad)~~ (Phase 6)
+- [ ] Per-voice level and pan, and level normalisation
 - [ ] Formant preservation / correction for more natural harmonies
 - [ ] Humanisation: small detune, timing offsets, and pitch drift per voice
 - [ ] Set the key from MIDI (sidechain MIDI notes or chords to pick the harmony)
@@ -84,4 +95,6 @@ The goal is to prove that audio flows through our code and that we can change it
 
 ## Icebox
 
+- [ ] Preset grid fills (for example, the chords of a chosen key)
+- [ ] Save the grid with the set or preset, and host automation of the toggles
 - [ ] Report to nice-plug: debug builds abort in Ableton Live 10 before `process()` runs. Live's VST3 channel-pointer array (`channelBuffers32`) isn't 8-byte aligned, so the debug-only alignment check in `BufferManager::create_buffers` panics (`panic_misaligned_pointer_dereference`). Fix: read the host's pointers with `read_unaligned`. Until then, `mise run install-debug` can't be used in Live 10
