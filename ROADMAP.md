@@ -88,6 +88,7 @@ The goal is to prove that audio flows through our code and that we can change it
 - [ ] Per-voice level and pan, and level normalisation
 - [ ] Formant preservation / correction for more natural harmonies
 - [ ] Humanisation: small detune, timing offsets, and pitch drift per voice
+- [ ] Transpose for transposing instruments: a setting (−11…+11 semitones, or presets such as B♭, E♭ and F) that shifts the detected pitch into the player's written key before the grid lookup. For example, with B♭ transpose a B♭ trumpet playing a written C (sounding B♭) triggers the grid's C row. Pitch shifting stays relative to the sounding note
 - [ ] Set the key from MIDI (sidechain MIDI notes or chords to pick the harmony)
 - [ ] Presets
 - [ ] Performance pass: profile CPU use and remove allocations from the audio thread
