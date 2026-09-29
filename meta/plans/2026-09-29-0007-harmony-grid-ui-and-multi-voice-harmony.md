@@ -524,15 +524,15 @@ Some(p) if self.analysis.is_running() => {
 
 #### Automated Verification:
 
-- [ ] Psola tests pass: `cargo test -p corral-dsp --lib psola`
-- [ ] Every printed figure is unchanged: rerun the baseline command into
+- [x] Psola tests pass: `cargo test -p corral-dsp --lib psola`
+- [x] Every printed figure is unchanged: rerun the baseline command into
       `target/0007-phase2.txt`, and `diff target/0007-baseline.txt
       target/0007-phase2.txt` shows no differences
-- [ ] `mise run check` passes
+- [x] `mise run check` passes
 
 #### Manual Verification:
 
-- [ ] None beyond the diff
+- [x] None beyond the diff
 
 ---
 

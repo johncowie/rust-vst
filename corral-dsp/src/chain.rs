@@ -11,7 +11,7 @@ use crate::harmony::IntervalSource;
 use crate::note;
 use crate::period::PeriodSmoother;
 use crate::pitch::{Detection, PitchTracker};
-use crate::psola::{self, Psola};
+use crate::psola::{self, Analysis, Voice};
 use crate::shift::{self, Glide};
 use crate::stabiliser::{NoteStabiliser, Update};
 use crate::wet_gate::WetGate;
@@ -55,7 +55,8 @@ pub struct Chain {
     glide_coefficient: f32,
     harmony: Option<Harmony>,
     gate: WetGate,
-    psola: Psola,
+    analysis: Analysis,
+    voice: Voice,
 }
 
 impl Chain {
@@ -76,7 +77,8 @@ impl Chain {
             glide_coefficient: shift::glide_coefficient(shift::DEFAULT_GLIDE_S, sample_rate),
             harmony: None,
             gate: WetGate::new(sample_rate),
-            psola: Psola::new(sample_rate),
+            analysis: Analysis::new(sample_rate),
+            voice: Voice::new(),
         }
     }
 
@@ -89,7 +91,8 @@ impl Chain {
         self.glide.jump(0.0);
         self.harmony = None;
         self.gate.reset();
-        self.psola.reset();
+        self.analysis.reset();
+        self.voice.stop();
     }
 
     pub fn window_len(&self) -> usize {
@@ -163,17 +166,24 @@ impl Chain {
 
         // Keep the shifter's state in step with the gate. The gate opens
         // only on a voiced hop, which also gives the smoother a period.
-        match (self.gate.is_active(), self.psola.is_running(), period) {
-            (true, false, Some(p)) => self.psola.start(p),
-            (false, true, _) => self.psola.stop(),
+        match (self.gate.is_active(), self.analysis.is_running(), period) {
+            (true, false, Some(p)) => {
+                let mark = self.analysis.start(p);
+                self.voice.start(mark);
+            }
+            (false, true, _) => {
+                self.analysis.stop();
+                self.voice.stop();
+            }
             _ => {}
         }
-        self.psola.push(mono, period.unwrap_or(0.0));
+        self.analysis.push(mono, period.unwrap_or(0.0));
 
         self.delay.process(frame); // frame now holds the delayed dry signal
         match period {
-            Some(p) if self.psola.is_running() => {
-                let shifted = self.psola.next(p, shift::ratio(semitones));
+            Some(p) if self.analysis.is_running() => {
+                let shifted = self.voice.next(&self.analysis, p, shift::ratio(semitones));
+                self.analysis.prune();
                 let (dry_gain, shifted_gain) = self.gate.next_gains();
                 // Skipping the arithmetic keeps the dry path bit-exact (−0.0
                 // included) when nothing shifted is audible.

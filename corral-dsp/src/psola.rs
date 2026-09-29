@@ -1,5 +1,11 @@
 //! TD-PSOLA pitch shifting. See docs/td-psola.md.
 //!
+//! Split in two so that several voices can share one analysis:
+//! [`Analysis`] holds the mono input ring and the confirmed pitch marks;
+//! each [`Voice`] holds only its grains and synthesis clock, and reads the
+//! analysis. Per sample: [`Analysis::push`], then every voice's
+//! [`Voice::next`], then [`Analysis::prune`].
+//!
 //! All time indices are `i64` input-sample indices since reset. The newest
 //! input is `n = written − 1`, and the output being produced is `o = n − L`.
 
@@ -40,7 +46,9 @@ struct Grain {
     live: bool,
 }
 
-pub struct Psola {
+/// The analysis side, shared by every voice: the mono input ring and the
+/// confirmed pitch marks.
+pub struct Analysis {
     latency: i64,
     max_period: i64,
     /// Mono input, power-of-two ring ≥ L + 2·P_max + 4.
@@ -53,13 +61,10 @@ pub struct Psola {
     mark_len: usize,
     /// +1.0 or −1.0: marks sit on peaks of this sign.
     polarity: f32,
-    grains: [Grain; MAX_GRAINS],
-    /// Output time of the next synthesis mark.
-    next_synthesis: f64,
     running: bool,
 }
 
-impl Psola {
+impl Analysis {
     /// Allocates. Call from `Chain::new`.
     pub fn new(sample_rate: f32) -> Self {
         let latency = latency_samples(sample_rate) as i64;
@@ -83,8 +88,6 @@ impl Psola {
             mark_head: 0,
             mark_len: 0,
             polarity: 1.0,
-            grains: [Grain::default(); MAX_GRAINS],
-            next_synthesis: 0.0,
             running: false,
         }
     }
@@ -190,31 +193,57 @@ impl Psola {
         }
     }
 
-    /// Starts shifting at the current output time. The first mark is
+    /// Starts marking at the current output time. The first mark is
     /// argmax |x| over [o − ⌈P⌉, o]; its sign sets `polarity`. Then marks are
     /// confirmed up to n, a catch-up burst of at most ~(L + P) / P searches.
-    pub fn start(&mut self, period: f32) {
+    /// Returns the first mark: where every voice that is live now starts
+    /// synthesising.
+    pub fn start(&mut self, period: f32) -> i64 {
         self.stop();
         let o = self.output_time();
         let first = self.argmax(o - period.ceil() as i64, o, f32::abs);
         self.polarity = if self.at(first) < 0.0 { -1.0 } else { 1.0 };
         self.push_mark(first);
-        self.next_synthesis = first as f64;
         self.running = true;
         self.confirm_marks(period);
+        first
     }
 
-    /// Stops and forgets marks and grains.
+    /// Stops and forgets the marks.
     pub fn stop(&mut self) {
         self.running = false;
         self.mark_head = 0;
         self.mark_len = 0;
-        self.grains = [Grain::default(); MAX_GRAINS];
-        self.next_synthesis = 0.0;
     }
 
     pub fn is_running(&self) -> bool {
         self.running
+    }
+
+    /// Where a voice added mid-note starts: the latest confirmed mark at or
+    /// before the output time, else the earliest mark. Call while running.
+    pub fn entry_mark(&self) -> i64 {
+        debug_assert!(self.running && self.mark_len > 0);
+        let o = self.output_time();
+        let mut entry = self.mark(0);
+        for i in 1..self.mark_len {
+            let mark = self.mark(i);
+            if mark > o {
+                break;
+            }
+            entry = mark;
+        }
+        entry
+    }
+
+    /// Drops marks no grain can use any more, keeping the last. Call once
+    /// per sample, after every voice's [`Voice::next`].
+    pub fn prune(&mut self) {
+        let horizon = self.output_time() - 2 * self.max_period;
+        while self.mark_len > 1 && self.mark(0) < horizon {
+            self.mark_head = (self.mark_head + 1) % MAX_MARKS;
+            self.mark_len -= 1;
+        }
     }
 
     /// The index of the confirmed mark nearest to output time `centre`.
@@ -242,6 +271,55 @@ impl Psola {
             period
         }
     }
+}
+
+/// One synthesis voice: its grains and synthesis clock over a shared
+/// [`Analysis`].
+#[derive(Clone, Copy)]
+pub struct Voice {
+    grains: [Grain; MAX_GRAINS],
+    /// Output time of the next synthesis mark.
+    next_synthesis: f64,
+    running: bool,
+}
+
+impl Default for Voice {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Voice {
+    pub const fn new() -> Self {
+        Self {
+            grains: [Grain {
+                centre: 0.0,
+                source: 0,
+                half: 0.0,
+                live: false,
+            }; MAX_GRAINS],
+            next_synthesis: 0.0,
+            running: false,
+        }
+    }
+
+    /// Clears the grains; the first synthesis mark is `mark`.
+    pub fn start(&mut self, mark: i64) {
+        self.grains = [Grain::default(); MAX_GRAINS];
+        self.next_synthesis = mark as f64;
+        self.running = true;
+    }
+
+    /// Stops and forgets the grains.
+    pub fn stop(&mut self) {
+        self.running = false;
+        self.grains = [Grain::default(); MAX_GRAINS];
+        self.next_synthesis = 0.0;
+    }
+
+    pub fn is_running(&self) -> bool {
+        self.running
+    }
 
     fn spawn(&mut self, grain: Grain) {
         let slot = match self.grains.iter().position(|g| !g.live) {
@@ -262,12 +340,12 @@ impl Psola {
         self.grains[slot] = grain;
     }
 
-    /// The shifted sample for output time o. Call once per sample after
-    /// [`Self::push`], while running.
-    pub fn next(&mut self, period: f32, ratio: f32) -> f32 {
-        debug_assert!(self.running);
-        let o = self.output_time();
-        let of = o as f64;
+    /// The shifted sample for the analysis's output time o. Call once per
+    /// sample after [`Analysis::push`], while both are running. Doesn't
+    /// prune the marks.
+    pub fn next(&mut self, analysis: &Analysis, period: f32, ratio: f32) -> f32 {
+        debug_assert!(self.running && analysis.running);
+        let of = analysis.output_time() as f64;
 
         // Spawn grains whose windows now reach o. Each grain's length and the
         // step to the next synthesis mark follow the spacing of the marks
@@ -277,11 +355,11 @@ impl Psola {
         // 0.36 / 0.52 / 0.63, spacing by the marks 0.72 / 0.81 / 0.85.
         while of >= self.next_synthesis - f64::from(period) {
             let centre = self.next_synthesis;
-            let source = self.nearest_mark(centre);
-            let local = self.local_period(source, period);
+            let source = analysis.nearest_mark(centre);
+            let local = analysis.local_period(source, period);
             let grain = Grain {
                 centre,
-                source: self.mark(source),
+                source: analysis.mark(source),
                 half: local,
                 live: true,
             };
@@ -301,19 +379,12 @@ impl Psola {
             let half = f64::from(grain.half);
             if offset.abs() < half {
                 let w = (0.5 + 0.5 * (PI * offset / half).cos()) as f32;
-                acc += w * self.read(grain.source as f64 + offset);
+                acc += w * analysis.read(grain.source as f64 + offset);
                 wsum += w;
             }
             if offset >= half {
                 self.grains[i].live = false;
             }
-        }
-
-        // Prune marks no grain can use any more, keeping the last one.
-        let horizon = o - 2 * self.max_period;
-        while self.mark_len > 1 && self.mark(0) < horizon {
-            self.mark_head = (self.mark_head + 1) % MAX_MARKS;
-            self.mark_len -= 1;
         }
 
         acc / f32::max(wsum, 1.0)
@@ -323,6 +394,51 @@ impl Psola {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// One analysis driving one voice, in the old `Psola` call order:
+    /// start, push, next, prune.
+    struct Psola {
+        analysis: Analysis,
+        voice: Voice,
+    }
+
+    impl Psola {
+        fn new(sample_rate: f32) -> Self {
+            Self {
+                analysis: Analysis::new(sample_rate),
+                voice: Voice::new(),
+            }
+        }
+
+        fn start(&mut self, period: f32) {
+            let mark = self.analysis.start(period);
+            self.voice.start(mark);
+        }
+
+        fn stop(&mut self) {
+            self.analysis.stop();
+            self.voice.stop();
+        }
+
+        fn reset(&mut self) {
+            self.analysis.reset();
+            self.voice.stop();
+        }
+
+        fn is_running(&self) -> bool {
+            self.analysis.is_running()
+        }
+
+        fn push(&mut self, sample: f32, period: f32) {
+            self.analysis.push(sample, period);
+        }
+
+        fn next(&mut self, period: f32, ratio: f32) -> f32 {
+            let shifted = self.voice.next(&self.analysis, period, ratio);
+            self.analysis.prune();
+            shifted
+        }
+    }
 
     /// A harmonic tone with harmonics at amplitude 1/k, peak ≈ 0.5.
     fn tone(sample_rate: f32, freq: f32, len: usize) -> Vec<f32> {
@@ -336,11 +452,17 @@ mod tests {
             .collect()
     }
 
-    /// Feeds `signal` with a fixed period and ratio, starting once `o` has
-    /// passed a full period. Returns the output (0.0 before the start) and
-    /// the sample at which it started.
+    /// The sample at which the tests start shifting: once `o` has passed a
+    /// full period.
+    fn start_at(analysis: &Analysis, period: f32) -> usize {
+        (analysis.latency + 2 * period.ceil() as i64) as usize
+    }
+
+    /// Feeds `signal` with a fixed period and ratio, starting at
+    /// [`start_at`]. Returns the output (0.0 before the start) and the
+    /// sample at which it started.
     fn run(psola: &mut Psola, signal: &[f32], period: f32, ratio: f32) -> (Vec<f32>, usize) {
-        let start_at = (psola.latency + 2 * period.ceil() as i64) as usize;
+        let start_at = start_at(&psola.analysis, period);
         let output = signal
             .iter()
             .enumerate()
@@ -359,14 +481,14 @@ mod tests {
         (output, start_at)
     }
 
-    fn live_grains(psola: &Psola) -> usize {
-        psola.grains.iter().filter(|g| g.live).count()
+    fn live_grains(voice: &Voice) -> usize {
+        voice.grains.iter().filter(|g| g.live).count()
     }
 
     /// SNR in dB of `output` against `signal` delayed by the latency, from
     /// output sample `from` on.
-    fn snr_db(psola: &Psola, signal: &[f32], output: &[f32], from: usize) -> f64 {
-        let latency = psola.latency as usize;
+    fn snr_db(analysis: &Analysis, signal: &[f32], output: &[f32], from: usize) -> f64 {
+        let latency = analysis.latency as usize;
         let (mut power, mut noise) = (0.0, 0.0);
         for i in from..output.len() {
             let expected = f64::from(signal[i - latency]);
@@ -386,8 +508,8 @@ mod tests {
     #[test]
     fn the_input_ring_covers_the_latency_and_two_long_periods() {
         for (sample_rate, len) in [(44_100.0, 4096), (48_000.0, 4096), (96_000.0, 8192)] {
-            let psola = Psola::new(sample_rate);
-            assert_eq!(psola.input.len(), len, "{sample_rate} Hz");
+            let analysis = Analysis::new(sample_rate);
+            assert_eq!(analysis.input.len(), len, "{sample_rate} Hz");
         }
     }
 
@@ -398,15 +520,22 @@ mod tests {
             let signal = tone(sample_rate, 220.0, sample_rate as usize / 2);
             let mut psola = Psola::new(sample_rate);
             run(&mut psola, &signal, period, 1.0);
-            assert!(psola.mark_len > 5, "{} marks", psola.mark_len);
-            for i in 0..psola.mark_len {
-                let mark = psola.mark(i);
-                let x = psola.polarity * psola.at(mark);
+            let analysis = &psola.analysis;
+            assert!(analysis.mark_len > 5, "{} marks", analysis.mark_len);
+            for i in 0..analysis.mark_len {
+                let mark = analysis.mark(i);
+                let x = analysis.polarity * analysis.at(mark);
                 assert!(x > 0.0, "mark {mark} is on the wrong side");
-                assert!(x >= psola.polarity * psola.at(mark - 1), "mark {mark}");
-                assert!(x >= psola.polarity * psola.at(mark + 1), "mark {mark}");
+                assert!(
+                    x >= analysis.polarity * analysis.at(mark - 1),
+                    "mark {mark}"
+                );
+                assert!(
+                    x >= analysis.polarity * analysis.at(mark + 1),
+                    "mark {mark}"
+                );
                 if i > 0 {
-                    let spacing = (mark - psola.mark(i - 1)) as f32;
+                    let spacing = (mark - analysis.mark(i - 1)) as f32;
                     assert!((spacing - period).abs() <= 1.0, "spacing {spacing}");
                 }
             }
@@ -421,7 +550,8 @@ mod tests {
                 let signal = tone(sample_rate, freq, sample_rate as usize);
                 let mut psola = Psola::new(sample_rate);
                 let (output, start) = run(&mut psola, &signal, period, 1.0);
-                let snr = snr_db(&psola, &signal, &output, start + 2 * period.ceil() as usize);
+                let from = start + 2 * period.ceil() as usize;
+                let snr = snr_db(&psola.analysis, &signal, &output, from);
                 println!("ratio 1, {freq} Hz at {sample_rate} Hz: SNR {snr:.1} dB");
                 assert!(snr >= 20.0, "{freq} Hz at {sample_rate} Hz: {snr:.1} dB");
             }
@@ -434,7 +564,7 @@ mod tests {
             let period = sample_rate / 1000.0;
             let signal = tone(sample_rate, 1000.0, sample_rate as usize / 4);
             let mut psola = Psola::new(sample_rate);
-            let start = (psola.latency + 2 * period.ceil() as i64) as usize;
+            let start = start_at(&psola.analysis, period);
             let mut most = 0;
             for (i, &x) in signal.iter().enumerate() {
                 if i == start {
@@ -443,7 +573,7 @@ mod tests {
                 psola.push(x, period);
                 if psola.is_running() {
                     psola.next(period, 2.0);
-                    most = most.max(live_grains(&psola));
+                    most = most.max(live_grains(&psola.voice));
                 }
             }
             assert!((1..=5).contains(&most), "{most} grains at {sample_rate} Hz");
@@ -470,11 +600,12 @@ mod tests {
         let signal = tone(sample_rate, 220.0, 48_000);
         let mut psola = Psola::new(sample_rate);
         let (_, _) = run(&mut psola, &signal[..12_000], period, 2.0);
-        assert!(live_grains(&psola) > 0);
+        assert!(live_grains(&psola.voice) > 0);
         psola.stop();
         assert!(!psola.is_running());
-        assert_eq!(live_grains(&psola), 0);
-        assert_eq!(psola.mark_len, 0);
+        assert!(!psola.voice.is_running());
+        assert_eq!(live_grains(&psola.voice), 0);
+        assert_eq!(psola.analysis.mark_len, 0);
 
         // Carry on feeding (stopped), then restart at ratio 1: the output is
         // the input again, with nothing left over from the ratio-2 grains.
@@ -489,12 +620,8 @@ mod tests {
                 output[i] = psola.next(period, 1.0);
             }
         }
-        let snr = snr_db(
-            &psola,
-            &signal,
-            &output,
-            restart + 2 * period.ceil() as usize,
-        );
+        let from = restart + 2 * period.ceil() as usize;
+        let snr = snr_db(&psola.analysis, &signal, &output, from);
         assert!(snr >= 20.0, "{snr:.1} dB after restart");
     }
 
@@ -507,7 +634,104 @@ mod tests {
         run(&mut psola, &signal, period, 1.0);
         psola.reset();
         assert!(!psola.is_running());
-        assert_eq!(psola.written, 0);
-        assert!(psola.input.iter().all(|&x| x == 0.0));
+        assert!(!psola.voice.is_running());
+        assert_eq!(psola.analysis.written, 0);
+        assert!(psola.analysis.input.iter().all(|&x| x == 0.0));
+    }
+
+    #[test]
+    fn voices_do_not_disturb_each_other() {
+        for sample_rate in [44_100.0, 48_000.0] {
+            let period = sample_rate / 220.0;
+            let signal = tone(sample_rate, 220.0, sample_rate as usize);
+            let (alone_up, _) = run(&mut Psola::new(sample_rate), &signal, period, 1.5);
+            let (alone_down, _) = run(&mut Psola::new(sample_rate), &signal, period, 0.75);
+
+            let mut analysis = Analysis::new(sample_rate);
+            let (mut up, mut down) = (Voice::new(), Voice::new());
+            let start = start_at(&analysis, period);
+            for (i, &x) in signal.iter().enumerate() {
+                if i == start {
+                    let mark = analysis.start(period);
+                    up.start(mark);
+                    down.start(mark);
+                }
+                analysis.push(x, period);
+                if analysis.is_running() {
+                    let a = up.next(&analysis, period, 1.5);
+                    let b = down.next(&analysis, period, 0.75);
+                    analysis.prune();
+                    assert_eq!(a.to_bits(), alone_up[i].to_bits(), "ratio 1.5, sample {i}");
+                    assert_eq!(
+                        b.to_bits(),
+                        alone_down[i].to_bits(),
+                        "ratio 0.75, sample {i}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_voice_started_mid_run_reconstructs_the_input() {
+        for sample_rate in [44_100.0, 48_000.0] {
+            let period = sample_rate / 220.0;
+            let signal = tone(sample_rate, 220.0, sample_rate as usize);
+            let mut analysis = Analysis::new(sample_rate);
+            let mut voice = Voice::new();
+            let start = start_at(&analysis, period);
+            let entry = sample_rate as usize / 2;
+            let mut output = vec![0.0; signal.len()];
+            for (i, &x) in signal.iter().enumerate() {
+                if i == start {
+                    analysis.start(period);
+                }
+                analysis.push(x, period);
+                if i == entry {
+                    voice.start(analysis.entry_mark());
+                }
+                if voice.is_running() {
+                    output[i] = voice.next(&analysis, period, 1.0);
+                }
+                if analysis.is_running() {
+                    analysis.prune();
+                }
+            }
+            let from = entry + 2 * period.ceil() as usize;
+            let snr = snr_db(&analysis, &signal, &output, from);
+            println!("voice started mid-run at {sample_rate} Hz: SNR {snr:.1} dB");
+            assert!(snr >= 20.0, "{sample_rate} Hz: {snr:.1} dB");
+        }
+    }
+
+    #[test]
+    fn the_entry_mark_is_at_or_before_the_output_time() {
+        let sample_rate = 48_000.0;
+        let period = sample_rate / 330.0;
+        let signal = tone(sample_rate, 330.0, 24_000);
+        let mut analysis = Analysis::new(sample_rate);
+        let start = start_at(&analysis, period);
+        let mut checked = 0;
+        for (i, &x) in signal.iter().enumerate() {
+            if i == start {
+                analysis.start(period);
+            }
+            analysis.push(x, period);
+            if analysis.is_running() {
+                let o = analysis.output_time();
+                if analysis.mark(0) <= o {
+                    let entry = analysis.entry_mark();
+                    assert!(entry <= o, "entry {entry} after o {o}");
+                    // The latest such mark: the next one is after o.
+                    let next = (0..analysis.mark_len)
+                        .map(|k| analysis.mark(k))
+                        .find(|&m| m > entry);
+                    assert!(next.is_none_or(|m| m > o), "entry {entry}, o {o}");
+                    checked += 1;
+                }
+                analysis.prune();
+            }
+        }
+        assert!(checked > 10_000, "{checked} samples checked");
     }
 }
